@@ -74,6 +74,46 @@ Thor 的 `yolo_world` 环境已有 TensorRT、CLIP 和 CUDA，但缺少 SAM2 的
 `hydra`、`iopath` 和 `portalocker`，退出时删除临时目录，不安装或修改任何
 共享 Conda 环境。代码同时强制关闭 Ultralytics 自动安装。
 
+## 第一阶段：左右图片输出 XYZ
+
+独立验收入口只读取指定左右目图片，不连接在线相机，不构造 CapX 控制器，也
+不启动 TRAC-IK 进程，不发送任何机器人运动。它输出瓶体几何中心在左相机
+光学坐标系和机器人机身坐标系中的 XYZ，以及深度离散度、有效像素数和标定
+状态：
+
+```bash
+./scripts/run_thor_image_xyz.sh \
+  --config thor.example.json \
+  --left-image /path/to/left.jpg \
+  --right-image /path/to/right.jpg \
+  --target bottle \
+  --output-json /tmp/image_xyz.json
+```
+
+机身坐标约定为 x 向前、y 向左、z 向上；相机坐标约定为 x 向右、y 向下、
+z 向前。`object_center_*` 是用估计瓶径从可见前表面向瓶内补偿半径后的瓶体
+几何中心，`front_surface_camera_xyz_m` 则是不做半径补偿的前表面点。
+
+如果已有人工测量的机身坐标，可直接进行欧氏距离误差验收：
+
+```bash
+./scripts/run_thor_image_xyz.sh \
+  --left-image /path/to/left.jpg \
+  --right-image /path/to/right.jpg \
+  --expected-body-xyz-m 0.52 0.08 0.06 \
+  --tolerance-m 0.03
+```
+
+返回码为 0 表示成功输出 XYZ，且在提供真值时误差不超过阈值；找不到目标或
+真值超差返回 1，配置、依赖、文件读写或推理异常返回 2。没有提供真值时，
+`acceptance.evaluated=false`，这只证明链路可运行，不能证明物理精度正确。
+当前示例标定仍为 `legacy_unvalidated`，因此输出中的
+`calibration.metric_xyz_approved` 保持 `false`。
+
+已知目标框时可增加 `--bbox X1 Y1 X2 Y2 --bbox-format pixel`，绕过
+YOLO-World 检测，单独验证分割、双目深度和坐标变换。`--output-json` 使用
+临时文件加原子替换写入纯 JSON，避免第三方推理库的控制台诊断污染结果文件。
+
 ## 仓库隔离验收
 
 同步前后分别在上层 RPent 运行以下只读命令，分支、HEAD 与状态输出应一致：

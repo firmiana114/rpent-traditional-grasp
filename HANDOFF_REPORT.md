@@ -37,6 +37,8 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 - `native/`：官方 TRAC-IK 核心、ROS2 最小兼容层和 G1 文本链求解器。
 - `robot/`：经核对的 G1 URDF 与左右 7 轴运动链。
 - `scripts/`：运动链导出、Thor 无 sudo 原生构建、影子运行入口。
+- `xyz.py` 与 `scripts/run_image_to_xyz.py`：左右图片到相机/机身 XYZ 的
+  第一阶段结构化验收及可选真值误差门禁；不启动 IK 或控制器。
 - `tests/traditional_grasp/`：几何、配置、安全、接口闭环和真实原生 IK 测试。
 
 ## 技术栈与外部依赖
@@ -68,6 +70,10 @@ PYTHONPATH=src python -m pytest -q
   --left-image /path/to/left.jpg \
   --right-image /path/to/right.jpg \
   --operation pick
+./scripts/run_thor_image_xyz.sh \
+  --left-image /path/to/left.jpg \
+  --right-image /path/to/right.jpg \
+  --output-json /tmp/image_xyz.json
 ```
 
 ## 当前状态与已验证事实
@@ -90,6 +96,9 @@ PYTHONPATH=src python -m pytest -q
 - Thor 已使用用户指定的历史左右图完成真实 shadow 感知：CREStereo 有效深度
   比例 1.000，YOLO 检出瓶子（0.887），SAM2 掩码 3356 像素（0.974），估计
   深度 0.567 m、瓶径 0.061 m、深度 MAD 0.0072 m。
+- 第一阶段独立图片入口已在 Thor 临时副本用同一历史样本复现；输出相机瓶心
+  `[-0.0544, -0.0992, 0.5973]` m、机身瓶心
+  `[0.5242, 0.0841, 0.0618]` m。该结果是软件回归基线，不是物理真值。
 - 验证图片是 `../logs/20260730-15:39:59_air_robot_task_s0/sensor/` 中同时间戳
   `20260730_154013_543214444` 的 `left_*.jpg` 与 `right_*.jpg`。
 - 该样本瓶心为机身坐标 `[0.524, 0.084, 0.062]` m；左右臂连续 IK 均因关节
@@ -100,6 +109,8 @@ PYTHONPATH=src python -m pytest -q
 - 按当前验证约束仅使用历史左右图；在线相机采集暂不继续。
 - `config/` 中的双目标定和相机到机身外参来自旧代码，状态为
   `legacy_unvalidated`；必须重标定并量化误差。
+- 第一阶段尚缺人工测量的多位置机身坐标真值；在至少覆盖近/中/远和左右视野
+  的样本通过误差阈值前，不得把可重复 XYZ 等同于物理坐标准确。
 - 瓶体商标区域在反光、透明瓶、遮挡和低纹理场景的深度成功率尚未实测。
 - 机器人自碰撞、环境碰撞和路径扫掠检查器尚未实现；`live` 因此保持阻断。
 - 上层 RPent 到高层四接口的最终接线未完成；上层当前有人并行修改，禁止直接

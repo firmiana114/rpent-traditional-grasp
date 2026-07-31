@@ -14,7 +14,7 @@ import numpy as np
 from rpent_traditional_grasp.api import TraditionalGraspAPI
 from rpent_traditional_grasp.config import TraditionalGraspConfig
 from rpent_traditional_grasp.execution import MockArmExecutor
-from rpent_traditional_grasp.ik import TracIKProcess
+from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import IKPath
 from rpent_traditional_grasp.perception import Sam2BoxSegmenter, YoloWorldDetector
@@ -250,6 +250,7 @@ def build_thor_shadow_api(
     left_image: str | Path | None = None,
     right_image: str | Path | None = None,
     online_camera: bool = False,
+    perception_only: bool = False,
 ) -> TraditionalGraspAPI:
     """Build the real Thor perception stack with simulated, no-motion arms."""
     path = Path(config_path).resolve()
@@ -302,29 +303,38 @@ def build_thor_shadow_api(
         resources.sam2_config,
         device="cuda",
     )
-    project_root = Path(__file__).resolve().parents[2]
-    left_binary = _resolve(resources.left_ik_binary, project_root)
-    right_binary = _resolve(resources.right_ik_binary, project_root)
-    ik_solvers = {
-        "left": TracIKProcess(
-            left_binary,
-            project_root / "robot/chains/g1_left_arm.chain",
-            "left",
-            config.planner.ik_timeout_s,
-            config.planner.ik_tolerance,
-        ),
-        "right": TracIKProcess(
-            right_binary,
-            project_root / "robot/chains/g1_right_arm.chain",
-            "right",
-            config.planner.ik_timeout_s,
-            config.planner.ik_tolerance,
-        ),
-    }
+    if perception_only:
+        ik_solvers = {
+            "left": MockIKSolver("left"),
+            "right": MockIKSolver("right"),
+        }
+        ik_backend = "mock_perception_only"
+    else:
+        project_root = Path(__file__).resolve().parents[2]
+        left_binary = _resolve(resources.left_ik_binary, project_root)
+        right_binary = _resolve(resources.right_ik_binary, project_root)
+        ik_solvers = {
+            "left": TracIKProcess(
+                left_binary,
+                project_root / "robot/chains/g1_left_arm.chain",
+                "left",
+                config.planner.ik_timeout_s,
+                config.planner.ik_tolerance,
+            ),
+            "right": TracIKProcess(
+                right_binary,
+                project_root / "robot/chains/g1_right_arm.chain",
+                "right",
+                config.planner.ik_timeout_s,
+                config.planner.ik_tolerance,
+            ),
+        }
+        ik_backend = "trac_ik"
     logger.info(
-        "Thor shadow 栈已构建: config=%s source=%s host=%s port=%d",
+        "Thor shadow 栈已构建: config=%s source=%s ik=%s host=%s port=%d",
         path,
         source_name,
+        ik_backend,
         host,
         port,
     )
