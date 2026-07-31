@@ -1,0 +1,40 @@
+{
+  "resources": {
+    "yolo_model": "/home/aiot/wuxi/yolo_world/weights/yolov8x-worldv2.engine",
+    "yolo_pt_model": "/home/aiot/wuxi/yolo_world/weights/yolov8x-worldv2.pt",
+    "sam2_repo": "/home/aiot/mingjuwang/vision/Grounded-SAM-2",
+    "sam2_checkpoint": "/home/aiot/mingjuwang/vision/Grounded-SAM-2/sam2_checkpoints/sam2.1_hiera_small.pt",
+    "sam2_config": "configs/sam2.1/sam2.1_hiera_s.yaml",
+    "crestereo_repo": "/home/aiot/airbot/Projects/rabbitbot-dev-ros2/3rdparty/mingjuwang",
+    "crestereo_model": "/home/aiot/mingjuwang/vision/ONNX-CREStereo-Depth-Estimation/models/crestereo_init_iter5_480x640.onnx",
+    "stereo_calibration": "config/thor_stereo_legacy.json",
+    "camera_to_body": "config/thor_camera_to_body_legacy.json",
+    "robot_urdf": "/home/aiot/fuchengjia/Projects/xr_teleoperate/assets/g1/g1_body29_hand14.urdf",
+    "left_ik_binary": "native/build/g1_trac_ik",
+    "right_ik_binary": "native/build/g1_trac_ik"
+  },
+  "perception": {
+    "target_prompts": ["bottle", "water bottle", "bottled water"],
+    "detection_confidence": 0.45,
+    "detection_iou": 0.45
+  },
+  "planner": {
+    "pregrasp_offset_m": 0.1,
+    "lift_offset_m": 0.1,
+    "retreat_offset_m": 0.08,
+    "cartesian_step_m": 0.01,
+    "rotation_step_rad": 0.12,
+    "max_joint_step_rad": 0.18,
+    "max_adaptive_subdivisions": 5,
+    "tip_offset_m": 0.05,
+    "preferred_arm": "auto"
+  },
+  "safety": {
+    "mode": "shadow",
+    "allow_motion": false,
+    "stereo_calibration_validated": false,
+    "camera_to_body_validated": false,
+    "collision_check_required": true,
+    "require_grasp_verification": true
+  }
+}

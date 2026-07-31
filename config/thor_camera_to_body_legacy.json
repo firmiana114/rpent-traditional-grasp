@@ -1,0 +1,12 @@
+{
+  "source": "/home/aiot/airbot/Projects/rabbitbot-dev-ros2/3rdparty/mingjuwang/object_grab.py",
+  "status": "legacy_unvalidated",
+  "from_frame": "left_camera_optical_rectified",
+  "to_frame": "body",
+  "transform": [
+    [0.0, -0.7384575496707293, 0.67429996836297, 0.0481285],
+    [-1.0, 0.0, 0.0, 0.029632],
+    [0.0, -0.67429996836297, -0.7384575496707293, 0.435991],
+    [0.0, 0.0, 0.0, 1.0]
+  ]
+}
