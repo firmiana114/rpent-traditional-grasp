@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 
 from rpent_traditional_grasp.api import TraditionalGraspAPI
@@ -68,14 +70,31 @@ def test_original_api_names_complete_simulated_pick() -> None:
 
     search = api.search_object("bottle")
     approach = api.approach_object("bottle")
-    pick = api.pick_object("bottle")
+    pick = api.pick_object(object_prompt="bottle")
     verify = api.verify_grasp()
 
     assert search["found"] is True
     assert approach["approached"] is True
-    assert pick["picked"] is True
-    assert pick["simulated"] is True
-    assert pick["max_joint_step_rad"] <= 0.05
+    assert pick["success"] is True
+    assert pick["status"] == "executed"
+    assert pick["execution"]["simulated"] is True
+    assert pick["execution"]["max_joint_step_rad"] <= 0.05
+    assert {
+        "success",
+        "action",
+        "object_prompt",
+        "requested_arm_side",
+        "selected_arm_side",
+        "status",
+        "verification",
+        "execution",
+        "bbox",
+        "bbox_image_path",
+        "depth_image_path",
+        "raw_depth_image_path",
+        "result_image_path",
+        "backend",
+    } <= pick.keys()
     assert verify["verified"] is True
 
 
@@ -83,30 +102,57 @@ def test_no_detection_fails_without_execution() -> None:
     api = make_api()
     api.detector = StaticDetector([])
 
-    result = api.pick_object("missing bottle")
+    result = api.pick_object(object_prompt="missing bottle")
 
-    assert result["picked"] is False
-    assert result["reason"] == "not_detected"
+    assert result["success"] is False
+    assert result["status"] == "detect_failed"
+    assert result["detector_result"]["reason"] == "not_detected"
     assert api.verify_grasp()["verified"] is False
 
 
 def test_pick_object_xyz_stage_stops_before_ik_and_motion() -> None:
     api = make_api()
 
-    result = api.pick_object("bottle", arm_side="auto", xyz_only=True)
+    result = api.preview_pick_object_xyz(
+        object_prompt="bottle",
+        arm_side="auto",
+    )
 
     assert result["success"] is True
     assert result["action"] == "pick_object"
     assert result["phase"] == "gripper_xyz"
     assert result["status"] == "xyz_ready"
-    assert result["requires_verification"] is False
     assert result["selected_arm_side"] == "left"
     assert len(result["final_tcp_body_xyz_m"]) == 3
     assert result["orientation_policy"] == "preserve_initial"
-    assert result["planned"] is False
-    assert result["executed"] is False
     assert api.context.ik_path is None
     assert api.context.execution is None
+
+
+def test_pick_object_public_signature_matches_rpent() -> None:
+    signature = inspect.signature(TraditionalGraspAPI.pick_object)
+
+    assert list(signature.parameters) == [
+        "self",
+        "object_prompt",
+        "arm_side",
+        "bbox",
+        "bbox_format",
+    ]
+    assert signature.parameters["object_prompt"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_pick_object_converts_internal_error_to_rpent_failure_result() -> None:
+    result = make_api().pick_object(
+        object_prompt="bottle",
+        arm_side="invalid",
+    )
+
+    assert result["success"] is False
+    assert result["action"] == "pick_object"
+    assert result["status"] == "execution_failed"
+    assert result["requested_arm_side"] == "invalid"
+    assert "ValueError" in result["error"]
 
 
 def test_thor_compatible_keywords_and_bbox() -> None:

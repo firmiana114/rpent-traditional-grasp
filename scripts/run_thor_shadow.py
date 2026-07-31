@@ -67,7 +67,7 @@ def main() -> int:
                 arm_side=args.arm,
             )
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("success") or result.get("planned") else 1
+    return 0 if result.get("success") or result.get("status") == "motion_gated" else 1
 
 
 if __name__ == "__main__":

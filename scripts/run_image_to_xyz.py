@@ -108,12 +108,11 @@ def main() -> int:
             perception_only=True,
         ) as api:
             if args.result_kind == "gripper_xyz":
-                result = api.pick_object(
+                result = api.preview_pick_object_xyz(
                     object_prompt=args.target,
                     arm_side=args.arm,
                     bbox=args.bbox,
                     bbox_format=args.bbox_format,
-                    xyz_only=True,
                 )
             else:
                 result = api.search_object(

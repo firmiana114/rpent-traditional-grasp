@@ -24,7 +24,9 @@
 `AirRobotClient.pick_object -> WuxiAdapter.pick_object -> 传统检测 ->
 机械臂执行`；本阶段不修改或接入 RPent，只在本仓库内按相同职责验证
 `TraditionalGraspAPI.pick_object`。待各阶段可靠性达标后，再替换 RPent
-适配层的后端实现。
+适配层的后端实现。该方法保持原有的仅关键字参数，以及 `success`、`status`、
+`requested_arm_side`、`selected_arm_side`、`verification`、`execution`
+等返回语义；阶段测试能力不会增加到该外部签名中。
 
 同时保留 `compute_depth_crestereo`、`segment_object`、
 `mask_depth_to_pointcloud`、`pointcloud_to_body`、`plan_contact_grasp` 和
@@ -124,8 +126,9 @@ YOLO-World 检测，单独验证分割、双目深度和坐标变换。`--output
 ## 第二阶段：左右图片输出最终夹爪 XYZ
 
 第二阶段保持夹爪初始姿态完全不变，只输出最终夹爪 TCP（工具中心点）需要
-到达的机身坐标。入口实际调用本项目
-`pick_object(..., xyz_only=True)`，不读取关节、不运行 IK、不发送运动：
+到达的机身坐标。入口调用内部阶段方法 `preview_pick_object_xyz`，它与
+`pick_object` 共用感知和目标计算逻辑，但不会改变 RPent 所见的外部方法
+签名，也不读取关节、不运行 IK、不发送运动：
 
 ```bash
 ./scripts/run_thor_image_gripper_xyz.sh \

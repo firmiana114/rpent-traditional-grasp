@@ -239,24 +239,54 @@ class TraditionalGraspAPI:
 
     def pick_object(
         self,
-        target: str | None = None,
         *,
-        object_prompt: str | None = None,
-        arm: str | None = None,
+        object_prompt: str,
         arm_side: str = "auto",
         bbox: object = None,
         bbox_format: str = "auto",
-        xyz_only: bool = False,
     ) -> dict[str, object]:
-        """Implement RPent's water-picking call from perception through execution.
+        """Match RPent's public pick contract while replacing its internals."""
+        try:
+            return self._pick_object_impl(
+                object_prompt=object_prompt,
+                arm_side=arm_side,
+                bbox=bbox,
+                bbox_format=bbox_format,
+            )
+        except Exception as exc:
+            logger.exception(
+                "pick_object 执行失败: target=%s arm=%s",
+                object_prompt,
+                arm_side,
+            )
+            return {
+                "success": False,
+                "action": "pick_object",
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
+                "selected_arm_side": None,
+                "status": "execution_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "verification": None,
+                "execution": None,
+                "bbox": None,
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+            }
 
-        ``xyz_only`` is the current staged acceptance mode: it stops after
-        stereo perception and final gripper TCP selection, without IK or motion.
-        """
-        target = object_prompt or target or "bottle"
-        arm = arm or arm_side
+    def _pick_object_impl(
+        self,
+        *,
+        object_prompt: str,
+        arm_side: str,
+        bbox: object,
+        bbox_format: str,
+    ) -> dict[str, object]:
+        """Run the replacement internals behind the stable public contract."""
+        target = object_prompt
+        arm = arm_side
         if arm not in {"auto", "left", "right"}:
-            raise ValueError("arm 必须是 auto、left 或 right")
+            raise ValueError("arm_side 必须是 auto、left 或 right")
         search = self.search_object(
             object_prompt=target,
             bbox=bbox,
@@ -264,44 +294,21 @@ class TraditionalGraspAPI:
         )
         if not search["found"]:
             return {
-                **search,
                 "success": False,
                 "action": "pick_object",
-                "picked": False,
+                "object_prompt": target,
                 "requested_arm_side": arm,
+                "selected_arm_side": None,
+                "status": "detect_failed",
+                "error": "traditional grasp detector did not find the target",
+                "verification": None,
+                "execution": None,
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+                "detector_result": search,
             }
         assert self.context.estimate is not None
-        if xyz_only:
-            gripper = compute_gripper_tcp_target(
-                self.context.estimate,
-                requested_arm=arm,
-                config=self.config.planner,
-            )
-            final_xyz = gripper.tcp_body_xyz_m.tolist()
-            logger.info(
-                "pick_object XYZ 阶段完成: target=%s arm=%s "
-                "xyz=[%.4f,%.4f,%.4f] ik=False motion=False",
-                target,
-                gripper.arm,
-                *gripper.tcp_body_xyz_m,
-            )
-            return {
-                **search,
-                "success": True,
-                "action": "pick_object",
-                "phase": "gripper_xyz",
-                "picked": False,
-                "planned": False,
-                "executed": False,
-                "requested_arm_side": arm,
-                "selected_arm_side": gripper.arm,
-                "final_tcp_body_xyz_m": final_xyz,
-                "orientation_policy": "preserve_initial",
-                "status": "xyz_ready",
-                "requires_verification": False,
-                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
-                "reason": "xyz_only",
-            }
         candidates = ["left", "right"] if arm == "auto" else [arm]
         paths: list[IKPath] = []
         errors: dict[str, str] = {}
@@ -317,12 +324,18 @@ class TraditionalGraspAPI:
                 )
         if not paths:
             return {
-                **search,
                 "success": False,
                 "action": "pick_object",
-                "picked": False,
+                "object_prompt": target,
                 "requested_arm_side": arm,
-                "reason": "no_continuous_ik",
+                "selected_arm_side": None,
+                "status": "plan_failed",
+                "error": "no continuous IK path",
+                "verification": None,
+                "execution": None,
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
                 "arm_errors": errors,
             }
         selected = min(paths, key=lambda item: item.score)
@@ -338,17 +351,23 @@ class TraditionalGraspAPI:
                 len(selected.positions),
             )
             return {
-                **search,
                 "success": False,
                 "action": "pick_object",
-                "picked": False,
-                "planned": True,
-                "executed": False,
-                "mode": self.config.safety.mode,
-                "arm": selected.arm,
+                "object_prompt": target,
+                "requested_arm_side": arm,
                 "selected_arm_side": selected.arm,
-                "path_points": len(selected.positions),
-                "reason": "motion_gated",
+                "status": "motion_gated",
+                "error": "non-live mode does not execute robot motion",
+                "verification": None,
+                "execution": {
+                    "planned": True,
+                    "executed": False,
+                    "mode": self.config.safety.mode,
+                    "path_points": len(selected.positions),
+                },
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
             }
         evidence = self.execute_grasp(selected)
         self.context.execution = evidence
@@ -359,19 +378,82 @@ class TraditionalGraspAPI:
             and evidence.lift_completed
         )
         return {
-            **search,
             "success": picked,
             "action": "pick_object",
-            "picked": picked,
-            "planned": True,
-            "executed": evidence.path_executed,
-            "simulated": simulated,
-            "arm": selected.arm,
+            "object_prompt": target,
             "requested_arm_side": arm,
             "selected_arm_side": selected.arm,
-            "path_points": len(selected.positions),
-            "max_joint_step_rad": selected.max_joint_step_rad,
-            "contact_detected": evidence.contact_detected,
+            "status": "executed" if picked else "execution_failed",
+            "verification": {
+                "contact_detected": evidence.contact_detected,
+                "lift_completed": evidence.lift_completed,
+                "verified": picked,
+            },
+            "execution": {
+                "planned": True,
+                "executed": evidence.path_executed,
+                "simulated": simulated,
+                "path_points": len(selected.positions),
+                "max_joint_step_rad": selected.max_joint_step_rad,
+            },
+            "bbox": search.get("bbox"),
+            **_empty_pick_artifacts(),
+            "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+        }
+
+    def preview_pick_object_xyz(
+        self,
+        *,
+        object_prompt: str,
+        arm_side: str = "auto",
+        bbox: object = None,
+        bbox_format: str = "auto",
+    ) -> dict[str, object]:
+        """Stop the replacement pipeline at final TCP XYZ for staged testing."""
+        if arm_side not in {"auto", "left", "right"}:
+            raise ValueError("arm_side 必须是 auto、left 或 right")
+        search = self.search_object(
+            object_prompt=object_prompt,
+            bbox=bbox,
+            bbox_format=bbox_format,
+        )
+        if not search["found"]:
+            return {
+                **search,
+                "success": False,
+                "action": "pick_object",
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
+                "selected_arm_side": None,
+                "status": "detect_failed",
+                "error": "traditional grasp detector did not find the target",
+            }
+        assert self.context.estimate is not None
+        gripper = compute_gripper_tcp_target(
+            self.context.estimate,
+            requested_arm=arm_side,
+            config=self.config.planner,
+        )
+        final_xyz = gripper.tcp_body_xyz_m.tolist()
+        logger.info(
+            "pick_object 内部 XYZ 阶段完成: target=%s arm=%s "
+            "xyz=[%.4f,%.4f,%.4f] ik=False motion=False",
+            object_prompt,
+            gripper.arm,
+            *gripper.tcp_body_xyz_m,
+        )
+        return {
+            **search,
+            "success": True,
+            "action": "pick_object",
+            "phase": "gripper_xyz",
+            "object_prompt": object_prompt,
+            "requested_arm_side": arm_side,
+            "selected_arm_side": gripper.arm,
+            "final_tcp_body_xyz_m": final_xyz,
+            "orientation_policy": "preserve_initial",
+            "status": "xyz_ready",
+            "reason": "staged_internal_preview",
         }
 
     def verify_grasp(
@@ -542,3 +624,13 @@ def _coerce_bbox(
     if x2 - x1 < 4 or y2 - y1 < 4:
         raise ValueError("bbox 裁剪后过小")
     return x1, y1, x2, y2
+
+
+def _empty_pick_artifacts() -> dict[str, None]:
+    """Preserve RPent's pick artifact fields until this backend emits images."""
+    return {
+        "bbox_image_path": None,
+        "depth_image_path": None,
+        "raw_depth_image_path": None,
+        "result_image_path": None,
+    }

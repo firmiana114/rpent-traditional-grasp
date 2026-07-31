@@ -17,11 +17,13 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
   `verify_grasp`。
 - 核心替代目标是 RPent 的 `pick_object` 逻辑；当前只在独立仓库按该方法的
   感知、规划、执行职责分阶段验收，尚未接入或修改父项目 RPent。
+- `pick_object` 已锁定原仅关键字参数及主要结果字段；阶段测试改走内部预览
+  方法，不向未来 RPent 调用暴露测试开关。
 - 细粒度接口：`compute_depth_crestereo`、`segment_object`、
   `mask_depth_to_pointcloud`、`pointcloud_to_body`、
   `plan_contact_grasp`、`execute_grasp`。
 - `offline` 用于完整模拟闭环；`shadow` 使用真实感知/IK但绝不发运动命令；
-  `live` 必须同时通过运动授权、两项标定和碰撞检查门禁。
+  `live` 必须同时通过运动授权、三项标定和碰撞检查门禁。
 - 抓取执行顺序固定为张手、到达预抓取、到达抓取位、闭合/接触、抬升、后撤。
   构造器和接口均不自动回零。
 
@@ -83,8 +85,8 @@ PYTHONPATH=src python -m pytest -q
 
 ## 当前状态与已验证事实
 
-- 本机 Linux/aarch64 容器已通过 C++ 无警告构建、左右臂 CTest 和 29 项
-  pytest；Thor 正式目录使用现有原生二进制同样为 29 项全部通过。
+- 本机 Linux/aarch64 容器已通过 C++ 无警告构建、左右臂 CTest 和 31 项
+  pytest；Thor 正式目录使用现有原生二进制同样为 31 项全部通过。
 - Thor 已将本项目克隆为独立嵌套仓库；无 sudo 本地依赖构建和左右臂原生自检
   通过，上层 RPent 的分支、HEAD、索引树和工作区状态在部署前后完全一致。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
@@ -107,8 +109,8 @@ PYTHONPATH=src python -m pytest -q
 - 第二阶段在运动学模型中将夹爪 TCP 定义为两指抓取中心；最终 TCP XYZ 与
   瓶体抓取中心相同，工具链已有 0.05 m 腕部偏移，不重复补偿。姿态继承初始
   末端旋转并保持不变；TCP 真机标定门禁当前为 false。
-- 第二阶段经 `TraditionalGraspAPI.pick_object(..., xyz_only=True)` 进入，
-  以保持与 RPent 原 `pick_object` 的职责对应；该模式在 IK 和运动前返回。
+- 第二阶段经内部 `preview_pick_object_xyz` 进入，与 `pick_object` 共用感知
+  和目标计算逻辑，并在 IK 和运动前返回。
 - 第二阶段独立入口已在 Thor 临时副本用历史图片完成真实推理回归：自动选择
   左臂，输出 TCP `[0.5242, 0.0841, 0.0618]` m，未启动 IK 或控制器。
 - 验证图片是 `../logs/20260730-15:39:59_air_robot_task_s0/sensor/` 中同时间戳
@@ -137,6 +139,8 @@ PYTHONPATH=src python -m pytest -q
 
 - 上层 RPent 只允许在本机 `.git/info/exclude` 加 `/traditional_grasp/`；
   同步前后必须核对其分支、HEAD 和 `git status --short` 完全一致。
+- Thor 父项目当前另有 `arm_service.py`、`vision_service.py` 并行未提交修改，
+  时间早于本轮服务器复验；本项目未改动、暂存或覆盖它们。
 - 不得在上层 RPent 执行本项目提交、拉取、切分支或 submodule 操作。
 - 不得把示例配置直接切为 `live`，不得绕过碰撞检查和标定验证布尔门禁。
 - TRAC-IK 只负责运动学求解，不提供碰撞安全保证。
