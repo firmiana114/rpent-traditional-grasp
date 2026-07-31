@@ -64,7 +64,6 @@ class PlannerConfig:
     retreat_offset_m: float = 0.08
     cartesian_step_m: float = 0.01
     rotation_step_rad: float = 0.12
-    max_joint_step_rad: float = 0.18
     max_adaptive_subdivisions: int = 5
     ik_timeout_s: float = 0.02
     ik_tolerance: float = 1e-5

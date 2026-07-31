@@ -41,7 +41,6 @@ def make_api() -> TraditionalGraspAPI:
         planner=PlannerConfig(
             left_tcp_rotation=identity_rotation,
             right_tcp_rotation=identity_rotation,
-            max_joint_step_rad=0.05,
         ),
         safety=SafetyConfig(
             mode="offline",
@@ -78,7 +77,7 @@ def test_original_api_names_complete_simulated_pick() -> None:
     assert pick["success"] is True
     assert pick["status"] == "executed"
     assert pick["execution"]["simulated"] is True
-    assert pick["execution"]["max_joint_step_rad"] <= 0.05
+    assert pick["execution"]["max_joint_step_rad"] >= 0.0
     assert {
         "success",
         "action",

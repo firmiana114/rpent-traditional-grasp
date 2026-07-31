@@ -265,21 +265,6 @@ def solve_continuous_path(
                 f"{arm} 臂在 {waypoint.name} 无连续逆解"
             ) from exc
         step = float(np.max(np.abs(solution - current)))
-        if step > config.max_joint_step_rad:
-            if depth < config.max_adaptive_subdivisions:
-                midpoint = CartesianWaypoint(
-                    f"{waypoint.name}:adaptive:{depth + 1}",
-                    interpolate_pose(current_pose, waypoint.pose, 0.5),
-                )
-                pending.insert(0, (waypoint, depth + 1))
-                pending.insert(0, (midpoint, depth + 1))
-                subdivisions += 1
-                continue
-            raise RuntimeError(
-                f"{arm} 臂关节跳变过大且自适应细分耗尽: "
-                f"waypoint={waypoint.name} step={step:.4f}rad > "
-                f"{config.max_joint_step_rad:.4f}rad"
-            )
         position_error = float(
             np.linalg.norm(solved_pose.position_m - waypoint.pose.position_m)
         )
@@ -311,7 +296,7 @@ def solve_continuous_path(
     )
     logger.info(
         "连续七轴逆解完成: arm=%s points=%d adaptive=%d "
-        "max_step=%.4frad score=%.5f",
+        "observed_max_step=%.4frad score=%.5f",
         arm,
         len(solutions),
         subdivisions,

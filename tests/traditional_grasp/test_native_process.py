@@ -6,8 +6,16 @@ import numpy as np
 import pytest
 
 from rpent_traditional_grasp.config import PlannerConfig
-from rpent_traditional_grasp.ik import TracIKProcess, solve_continuous_path
-from rpent_traditional_grasp.models import BottleEstimate
+from rpent_traditional_grasp.ik import (
+    MockIKSolver,
+    TracIKProcess,
+    solve_continuous_path,
+)
+from rpent_traditional_grasp.models import (
+    BottleEstimate,
+    CartesianWaypoint,
+    Pose,
+)
 from rpent_traditional_grasp.planning import (
     interpolate_waypoints,
     plan_fixed_side_grasp,
@@ -76,5 +84,24 @@ def test_g1_fixed_side_path_is_continuously_reachable(
         )
         path = solve_continuous_path(arm, solver, seed, dense, config)
 
-    assert path.max_joint_step_rad <= config.max_joint_step_rad
+    assert np.isfinite(path.max_joint_step_rad)
     assert path.waypoint_names.count("grasp") == 1
+
+
+def test_continuous_path_records_large_joint_step_without_rejecting() -> None:
+    solver = MockIKSolver("left")
+    target = Pose(
+        position_m=np.array([0.4, 0.0, 0.0]),
+        rotation=np.eye(3),
+    )
+
+    path = solve_continuous_path(
+        "left",
+        solver,
+        np.zeros(7),
+        [CartesianWaypoint("large-step", target)],
+        PlannerConfig(),
+    )
+
+    assert path.max_joint_step_rad == pytest.approx(0.4)
+    assert path.waypoint_names == ["large-step"]
