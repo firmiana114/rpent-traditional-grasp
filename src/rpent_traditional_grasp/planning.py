@@ -11,6 +11,7 @@ from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import (
     BottleEstimate,
     CartesianWaypoint,
+    GripperTarget,
     Pose,
 )
 
@@ -21,15 +22,26 @@ def plan_fixed_side_grasp(
     estimate: BottleEstimate,
     arm: str,
     config: PlannerConfig,
+    tcp_rotation: np.ndarray | None = None,
 ) -> list[CartesianWaypoint]:
-    """Plan pregrasp, contact, lift and retreat in the body frame."""
-    if arm not in {"left", "right"}:
-        raise ValueError("arm 必须是 left 或 right")
-    target = np.asarray(estimate.center_body_m, dtype=np.float64)
-    rotation_values = (
-        config.left_tcp_rotation if arm == "left" else config.right_tcp_rotation
+    """Plan a translation-only grasp while preserving the supplied TCP rotation."""
+    gripper_target = compute_gripper_tcp_target(
+        estimate,
+        requested_arm=arm,
+        config=config,
     )
-    rotation = np.asarray(rotation_values, dtype=np.float64).reshape(3, 3)
+    target = gripper_target.tcp_body_xyz_m
+    if tcp_rotation is None:
+        rotation_values = (
+            config.left_tcp_rotation if arm == "left" else config.right_tcp_rotation
+        )
+        rotation = np.asarray(rotation_values, dtype=np.float64).reshape(3, 3)
+        rotation_source = "configured_fallback"
+    else:
+        rotation = np.asarray(tcp_rotation, dtype=np.float64)
+        rotation_source = "initial_tcp_pose"
+    if rotation.shape != (3, 3):
+        raise ValueError("TCP 姿态必须是 3x3 旋转矩阵")
     if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6):
         raise ValueError(f"{arm} TCP 固定姿态不是正交旋转矩阵")
 
@@ -47,14 +59,71 @@ def plan_fixed_side_grasp(
     ]
     logger.info(
         "固定侧抓路径已生成: arm=%s target=[%.3f,%.3f,%.3f] "
-        "pregrasp=%.3fm lift=%.3fm retreat=%.3fm",
+        "rotation=%s pregrasp=%.3fm lift=%.3fm retreat=%.3fm",
         arm,
         *target,
+        rotation_source,
         config.pregrasp_offset_m,
         config.lift_offset_m,
         config.retreat_offset_m,
     )
     return waypoints
+
+
+def compute_gripper_tcp_target(
+    estimate: BottleEstimate,
+    *,
+    requested_arm: str,
+    config: PlannerConfig,
+) -> GripperTarget:
+    """Return the final translation of the grasp-center TCP in the body frame.
+
+    The exported G1 chains already contain the wrist-to-TCP fixed offset.
+    Consequently the TCP target is the estimated bottle grasp center itself;
+    applying ``tip_offset_m`` again here would double-count that offset.
+    """
+    if requested_arm not in {"auto", "left", "right"}:
+        raise ValueError("requested_arm 必须是 auto、left 或 right")
+    target = np.asarray(estimate.center_body_m, dtype=np.float64)
+    if target.shape != (3,) or not np.all(np.isfinite(target)):
+        raise ValueError("瓶体机身坐标必须是三个有限数值")
+
+    if requested_arm != "auto":
+        arm = requested_arm
+        selection_policy = "explicit"
+    elif config.preferred_arm != "auto":
+        arm = config.preferred_arm
+        selection_policy = "configured_preference"
+    else:
+        arm = "left" if target[1] >= 0.0 else "right"
+        selection_policy = "body_y_side"
+
+    distance_m = float(np.linalg.norm(target))
+    if distance_m > config.max_reach_m:
+        logger.warning(
+            "夹爪 TCP 目标超出距离门禁: arm=%s distance=%.3fm max=%.3fm",
+            arm,
+            distance_m,
+            config.max_reach_m,
+        )
+        raise ValueError(
+            f"夹爪 TCP 目标超出最大距离: {distance_m:.3f}m > "
+            f"{config.max_reach_m:.3f}m"
+        )
+    logger.info(
+        "最终夹爪 TCP XYZ 已计算: arm=%s policy=%s "
+        "xyz=[%.4f,%.4f,%.4f] distance=%.4fm orientation=preserve_initial",
+        arm,
+        selection_policy,
+        *target,
+        distance_m,
+    )
+    return GripperTarget(
+        arm=arm,
+        tcp_body_xyz_m=target.copy(),
+        selection_policy=selection_policy,
+        distance_m=distance_m,
+    )
 
 
 def interpolate_waypoints(

@@ -15,6 +15,8 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 
 - 高层兼容接口：`search_object`、`approach_object`、`pick_object`、
   `verify_grasp`。
+- 核心替代目标是 RPent 的 `pick_object` 逻辑；当前只在独立仓库按该方法的
+  感知、规划、执行职责分阶段验收，尚未接入或修改父项目 RPent。
 - 细粒度接口：`compute_depth_crestereo`、`segment_object`、
   `mask_depth_to_pointcloud`、`pointcloud_to_body`、
   `plan_contact_grasp`、`execute_grasp`。
@@ -38,7 +40,7 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 - `robot/`：经核对的 G1 URDF 与左右 7 轴运动链。
 - `scripts/`：运动链导出、Thor 无 sudo 原生构建、影子运行入口。
 - `xyz.py` 与 `scripts/run_image_to_xyz.py`：左右图片到相机/机身 XYZ 的
-  第一阶段结构化验收及可选真值误差门禁；不启动 IK 或控制器。
+  物体/最终夹爪 TCP 结构化验收及可选真值误差门禁；不启动 IK 或控制器。
 - `tests/traditional_grasp/`：几何、配置、安全、接口闭环和真实原生 IK 测试。
 
 ## 技术栈与外部依赖
@@ -74,12 +76,15 @@ PYTHONPATH=src python -m pytest -q
   --left-image /path/to/left.jpg \
   --right-image /path/to/right.jpg \
   --output-json /tmp/image_xyz.json
+./scripts/run_thor_image_gripper_xyz.sh \
+  --left-image /path/to/left.jpg \
+  --right-image /path/to/right.jpg
 ```
 
 ## 当前状态与已验证事实
 
-- 本机 Linux/aarch64 容器已通过 C++ 无警告构建、左右臂 CTest、18 项 pytest
-  和 Ruff 静态检查。
+- 本机 Linux/aarch64 容器已通过 C++ 无警告构建、左右臂 CTest 和 29 项
+  pytest；Thor 正式目录使用现有原生二进制同样为 29 项全部通过。
 - Thor 已将本项目克隆为独立嵌套仓库；无 sudo 本地依赖构建和左右臂原生自检
   通过，上层 RPent 的分支、HEAD、索引树和工作区状态在部署前后完全一致。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
@@ -99,6 +104,13 @@ PYTHONPATH=src python -m pytest -q
 - 第一阶段独立图片入口已在 Thor 临时副本用同一历史样本复现；输出相机瓶心
   `[-0.0544, -0.0992, 0.5973]` m、机身瓶心
   `[0.5242, 0.0841, 0.0618]` m。该结果是软件回归基线，不是物理真值。
+- 第二阶段在运动学模型中将夹爪 TCP 定义为两指抓取中心；最终 TCP XYZ 与
+  瓶体抓取中心相同，工具链已有 0.05 m 腕部偏移，不重复补偿。姿态继承初始
+  末端旋转并保持不变；TCP 真机标定门禁当前为 false。
+- 第二阶段经 `TraditionalGraspAPI.pick_object(..., xyz_only=True)` 进入，
+  以保持与 RPent 原 `pick_object` 的职责对应；该模式在 IK 和运动前返回。
+- 第二阶段独立入口已在 Thor 临时副本用历史图片完成真实推理回归：自动选择
+  左臂，输出 TCP `[0.5242, 0.0841, 0.0618]` m，未启动 IK 或控制器。
 - 验证图片是 `../logs/20260730-15:39:59_air_robot_task_s0/sensor/` 中同时间戳
   `20260730_154013_543214444` 的 `left_*.jpg` 与 `right_*.jpg`。
 - 该样本瓶心为机身坐标 `[0.524, 0.084, 0.062]` m；左右臂连续 IK 均因关节

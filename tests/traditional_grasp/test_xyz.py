@@ -3,8 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from rpent_traditional_grasp.config import PlannerConfig
 from rpent_traditional_grasp.models import BottleEstimate
-from rpent_traditional_grasp.xyz import build_xyz_report
+from rpent_traditional_grasp.xyz import (
+    build_gripper_xyz_report,
+    build_xyz_report,
+)
 
 
 def _estimate() -> BottleEstimate:
@@ -91,3 +95,51 @@ def test_xyz_report_rejects_invalid_truth_shape() -> None:
             camera_to_body_validated=True,
             expected_body_xyz_m=[0.5, 0.1],
         )
+
+
+def test_gripper_xyz_report_targets_bottle_center_and_preserves_orientation() -> None:
+    report = build_gripper_xyz_report(
+        estimate=_estimate(),
+        left_image="left.jpg",
+        right_image="right.jpg",
+        target="bottle",
+        requested_arm="auto",
+        planner_config=PlannerConfig(),
+        stereo_calibration_validated=False,
+        camera_to_body_validated=False,
+        gripper_tcp_calibration_validated=False,
+    )
+
+    target = report["gripper_target"]
+    assert report["stage"] == "stereo_image_to_gripper_xyz"
+    assert report["entrypoint"] == "pick_object"
+    assert target["selected_arm"] == "left"
+    assert target["final_tcp_body_xyz_m"] == [0.52, 0.08, 0.06]
+    assert target["orientation_policy"] == "preserve_initial"
+    assert target["orientation_commanded"] is False
+    assert report["calibration"]["metric_gripper_xyz_approved"] is False
+    assert (
+        target["tcp_offset_application"]
+        == "encoded_in_kinematic_chain_not_added_again"
+    )
+
+
+def test_gripper_xyz_report_applies_truth_gate() -> None:
+    report = build_gripper_xyz_report(
+        estimate=_estimate(),
+        left_image="left.jpg",
+        right_image="right.jpg",
+        target="bottle",
+        requested_arm="right",
+        planner_config=PlannerConfig(),
+        stereo_calibration_validated=True,
+        camera_to_body_validated=True,
+        gripper_tcp_calibration_validated=True,
+        expected_gripper_xyz_m=[0.51, 0.08, 0.06],
+        tolerance_m=0.02,
+    )
+
+    assert report["success"] is True
+    assert report["gripper_target"]["selected_arm"] == "right"
+    assert report["acceptance"]["passed"] is True
+    assert report["calibration"]["metric_gripper_xyz_approved"] is True

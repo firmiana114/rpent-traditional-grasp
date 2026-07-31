@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the no-motion stage-one stereo-image-to-XYZ acceptance test."""
+"""Run no-motion stereo-image-to-object or gripper XYZ acceptance tests."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from typing import Any
 
 from rpent_traditional_grasp.logging import configure_logging, get_logger
 from rpent_traditional_grasp.thor import build_thor_shadow_api
-from rpent_traditional_grasp.xyz import build_xyz_report
+from rpent_traditional_grasp.xyz import (
+    build_gripper_xyz_report,
+    build_xyz_report,
+)
 
 logger = get_logger("image_to_xyz")
 
@@ -19,7 +22,7 @@ logger = get_logger("image_to_xyz")
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read one synchronized stereo image pair and emit bottle XYZ. "
+            "Read one synchronized stereo image pair and emit object or gripper XYZ. "
             "This command never opens the online camera or sends robot motion."
         ),
     )
@@ -27,6 +30,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--right-image", required=True)
     parser.add_argument("--config", default="thor.example.json")
     parser.add_argument("--target", default="bottle")
+    parser.add_argument(
+        "--result-kind",
+        choices=["object_xyz", "gripper_xyz"],
+        default="object_xyz",
+        help="Emit the object center or the final gripper TCP target.",
+    )
+    parser.add_argument(
+        "--arm",
+        choices=["auto", "left", "right"],
+        default="auto",
+        help="Gripper arm selection for gripper_xyz output.",
+    )
     parser.add_argument(
         "--bbox",
         nargs=4,
@@ -47,6 +62,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional measured body-frame truth used for pass/fail.",
     )
     parser.add_argument(
+        "--expected-gripper-xyz-m",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "Z"),
+        help="Optional measured final gripper TCP truth used for pass/fail.",
+    )
+    parser.add_argument(
         "--tolerance-m",
         type=float,
         default=0.03,
@@ -62,9 +84,17 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
+    if (
+        args.result_kind == "object_xyz"
+        and args.expected_gripper_xyz_m is not None
+    ):
+        parser.error("--expected-gripper-xyz-m 仅用于 gripper_xyz")
+    if args.result_kind == "gripper_xyz" and args.expected_body_xyz_m is not None:
+        parser.error("--expected-body-xyz-m 仅用于 object_xyz")
     configure_logging()
     logger.info(
-        "开始第一阶段图片到 XYZ 测试: left=%s right=%s target=%s bbox=%s",
+        "开始图片到 XYZ 测试: kind=%s left=%s right=%s target=%s bbox=%s",
+        args.result_kind,
         args.left_image,
         args.right_image,
         args.target,
@@ -77,47 +107,91 @@ def main() -> int:
             right_image=args.right_image,
             perception_only=True,
         ) as api:
-            search = api.search_object(
-                object_prompt=args.target,
-                bbox=args.bbox,
-                bbox_format=args.bbox_format,
-            )
-            if not search.get("found"):
+            if args.result_kind == "gripper_xyz":
+                result = api.pick_object(
+                    object_prompt=args.target,
+                    arm_side=args.arm,
+                    bbox=args.bbox,
+                    bbox_format=args.bbox_format,
+                    xyz_only=True,
+                )
+            else:
+                result = api.search_object(
+                    object_prompt=args.target,
+                    bbox=args.bbox,
+                    bbox_format=args.bbox_format,
+                )
+            if not result.get("found"):
                 report: dict[str, Any] = {
                     "schema_version": 1,
-                    "stage": "stereo_image_to_xyz",
+                    "stage": (
+                        "stereo_image_to_gripper_xyz"
+                        if args.result_kind == "gripper_xyz"
+                        else "stereo_image_to_xyz"
+                    ),
                     "success": False,
-                    "reason": search.get("reason", "target_not_found"),
-                    "search": search,
+                    "reason": result.get("reason", "target_not_found"),
+                    (
+                        "pick_object"
+                        if args.result_kind == "gripper_xyz"
+                        else "search_object"
+                    ): result,
                 }
             else:
                 estimate = api.context.estimate
                 if estimate is None:
                     raise RuntimeError("搜索成功但缺少瓶体几何估计")
-                report = build_xyz_report(
-                    estimate=estimate,
-                    left_image=Path(args.left_image),
-                    right_image=Path(args.right_image),
-                    target=args.target,
-                    stereo_calibration_validated=(
+                common = {
+                    "estimate": estimate,
+                    "left_image": Path(args.left_image),
+                    "right_image": Path(args.right_image),
+                    "target": args.target,
+                    "stereo_calibration_validated": (
                         api.config.safety.stereo_calibration_validated
                     ),
-                    camera_to_body_validated=(
+                    "camera_to_body_validated": (
                         api.config.safety.camera_to_body_validated
                     ),
-                    expected_body_xyz_m=args.expected_body_xyz_m,
-                    tolerance_m=args.tolerance_m,
-                )
+                    "tolerance_m": args.tolerance_m,
+                }
+                if args.result_kind == "gripper_xyz":
+                    report = build_gripper_xyz_report(
+                        **common,
+                        requested_arm=args.arm,
+                        planner_config=api.config.planner,
+                        gripper_tcp_calibration_validated=(
+                            api.config.safety.gripper_tcp_calibration_validated
+                        ),
+                        expected_gripper_xyz_m=args.expected_gripper_xyz_m,
+                    )
+                    if (
+                        result.get("final_tcp_body_xyz_m")
+                        != report["gripper_target"]["final_tcp_body_xyz_m"]
+                    ):
+                        raise RuntimeError(
+                            "pick_object 与结构化报告的最终夹爪 XYZ 不一致"
+                        )
+                    report["entrypoint"] = "pick_object"
+                else:
+                    report = build_xyz_report(
+                        **common,
+                        expected_body_xyz_m=args.expected_body_xyz_m,
+                    )
     except Exception as exc:
         logger.exception(
-            "第一阶段图片到 XYZ 测试失败: left=%s right=%s target=%s",
+            "图片到 XYZ 测试失败: kind=%s left=%s right=%s target=%s",
+            args.result_kind,
             args.left_image,
             args.right_image,
             args.target,
         )
         report = {
             "schema_version": 1,
-            "stage": "stereo_image_to_xyz",
+            "stage": (
+                "stereo_image_to_gripper_xyz"
+                if args.result_kind == "gripper_xyz"
+                else "stereo_image_to_xyz"
+            ),
             "success": False,
             "reason": "pipeline_error",
             "error": f"{type(exc).__name__}: {exc}",

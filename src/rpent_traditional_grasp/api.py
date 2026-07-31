@@ -25,6 +25,7 @@ from rpent_traditional_grasp.models import (
 )
 from rpent_traditional_grasp.perception import Detector, Segmenter
 from rpent_traditional_grasp.planning import (
+    compute_gripper_tcp_target,
     interpolate_waypoints,
     plan_fixed_side_grasp,
 )
@@ -245,8 +246,13 @@ class TraditionalGraspAPI:
         arm_side: str = "auto",
         bbox: object = None,
         bbox_format: str = "auto",
+        xyz_only: bool = False,
     ) -> dict[str, object]:
-        """Search, plan continuous IK, and execute or simulate one grasp."""
+        """Implement RPent's water-picking call from perception through execution.
+
+        ``xyz_only`` is the current staged acceptance mode: it stops after
+        stereo perception and final gripper TCP selection, without IK or motion.
+        """
         target = object_prompt or target or "bottle"
         arm = arm or arm_side
         if arm not in {"auto", "left", "right"}:
@@ -265,6 +271,37 @@ class TraditionalGraspAPI:
                 "requested_arm_side": arm,
             }
         assert self.context.estimate is not None
+        if xyz_only:
+            gripper = compute_gripper_tcp_target(
+                self.context.estimate,
+                requested_arm=arm,
+                config=self.config.planner,
+            )
+            final_xyz = gripper.tcp_body_xyz_m.tolist()
+            logger.info(
+                "pick_object XYZ 阶段完成: target=%s arm=%s "
+                "xyz=[%.4f,%.4f,%.4f] ik=False motion=False",
+                target,
+                gripper.arm,
+                *gripper.tcp_body_xyz_m,
+            )
+            return {
+                **search,
+                "success": True,
+                "action": "pick_object",
+                "phase": "gripper_xyz",
+                "picked": False,
+                "planned": False,
+                "executed": False,
+                "requested_arm_side": arm,
+                "selected_arm_side": gripper.arm,
+                "final_tcp_body_xyz_m": final_xyz,
+                "orientation_policy": "preserve_initial",
+                "status": "xyz_ready",
+                "requires_verification": False,
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+                "reason": "xyz_only",
+            }
         candidates = ["left", "right"] if arm == "auto" else [arm]
         paths: list[IKPath] = []
         errors: dict[str, str] = {}
@@ -432,7 +469,12 @@ class TraditionalGraspAPI:
         solver = self.ik_solvers[arm]
         current_joints = self.executor.current_joints(arm)
         start_pose = solver.forward(current_joints)
-        sparse = plan_fixed_side_grasp(estimate, arm, self.config.planner)
+        sparse = plan_fixed_side_grasp(
+            estimate,
+            arm,
+            self.config.planner,
+            tcp_rotation=start_pose.rotation,
+        )
         dense = interpolate_waypoints(
             start_pose,
             sparse,

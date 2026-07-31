@@ -34,5 +34,5 @@ done
 
 export PYTHONPATH="${deps_root}:${project_root}/src"
 export YOLO_AUTOINSTALL=false
-log_info "启动第一阶段图片到 XYZ 测试；不采集相机、不自动安装、不发送运动"
+log_info "启动图片到 XYZ 测试；不采集相机、不自动安装、不发送运动"
 "${yolo_python}" "${project_root}/scripts/run_image_to_xyz.py" "$@"

@@ -106,6 +106,7 @@ class SafetyConfig:
     allow_motion: bool = False
     stereo_calibration_validated: bool = False
     camera_to_body_validated: bool = False
+    gripper_tcp_calibration_validated: bool = False
     collision_check_required: bool = True
     require_grasp_verification: bool = True
 
@@ -207,6 +208,8 @@ class TraditionalGraspConfig:
                 missing.append("stereo_calibration_validated")
             if not self.safety.camera_to_body_validated:
                 missing.append("camera_to_body_validated")
+            if not self.safety.gripper_tcp_calibration_validated:
+                missing.append("gripper_tcp_calibration_validated")
             if missing:
                 raise ValueError("live 模式安全门未满足: " + ", ".join(missing))
 

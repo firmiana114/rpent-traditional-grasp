@@ -90,6 +90,25 @@ def test_no_detection_fails_without_execution() -> None:
     assert api.verify_grasp()["verified"] is False
 
 
+def test_pick_object_xyz_stage_stops_before_ik_and_motion() -> None:
+    api = make_api()
+
+    result = api.pick_object("bottle", arm_side="auto", xyz_only=True)
+
+    assert result["success"] is True
+    assert result["action"] == "pick_object"
+    assert result["phase"] == "gripper_xyz"
+    assert result["status"] == "xyz_ready"
+    assert result["requires_verification"] is False
+    assert result["selected_arm_side"] == "left"
+    assert len(result["final_tcp_body_xyz_m"]) == 3
+    assert result["orientation_policy"] == "preserve_initial"
+    assert result["planned"] is False
+    assert result["executed"] is False
+    assert api.context.ik_path is None
+    assert api.context.execution is None
+
+
 def test_thor_compatible_keywords_and_bbox() -> None:
     api = make_api()
 

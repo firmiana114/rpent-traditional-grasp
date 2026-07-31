@@ -34,6 +34,7 @@
     "allow_motion": false,
     "stereo_calibration_validated": false,
     "camera_to_body_validated": false,
+    "gripper_tcp_calibration_validated": false,
     "collision_check_required": true,
     "require_grasp_verification": true
   }

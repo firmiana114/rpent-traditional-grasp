@@ -47,6 +47,16 @@ class BottleEstimate:
 
 
 @dataclass(slots=True)
+class GripperTarget:
+    """Final gripper TCP translation selected for one arm."""
+
+    arm: str
+    tcp_body_xyz_m: np.ndarray
+    selection_policy: str
+    distance_m: float
+
+
+@dataclass(slots=True)
 class Pose:
     """Rigid pose represented by translation and a 3x3 rotation."""
 

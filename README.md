@@ -19,6 +19,13 @@
 - `pick_object`
 - `verify_grasp`
 
+其中 `pick_object(object_prompt, arm_side, bbox, bbox_format)` 是本项目需要
+独立验证并最终替换的核心逻辑。RPent 当前链路是
+`AirRobotClient.pick_object -> WuxiAdapter.pick_object -> 传统检测 ->
+机械臂执行`；本阶段不修改或接入 RPent，只在本仓库内按相同职责验证
+`TraditionalGraspAPI.pick_object`。待各阶段可靠性达标后，再替换 RPent
+适配层的后端实现。
+
 同时保留 `compute_depth_crestereo`、`segment_object`、
 `mask_depth_to_pointcloud`、`pointcloud_to_body`、`plan_contact_grasp` 和
 `execute_grasp` 细粒度方法，便于接回 Thor 现有适配层。
@@ -113,6 +120,41 @@ z 向前。`object_center_*` 是用估计瓶径从可见前表面向瓶内补偿
 已知目标框时可增加 `--bbox X1 Y1 X2 Y2 --bbox-format pixel`，绕过
 YOLO-World 检测，单独验证分割、双目深度和坐标变换。`--output-json` 使用
 临时文件加原子替换写入纯 JSON，避免第三方推理库的控制台诊断污染结果文件。
+
+## 第二阶段：左右图片输出最终夹爪 XYZ
+
+第二阶段保持夹爪初始姿态完全不变，只输出最终夹爪 TCP（工具中心点）需要
+到达的机身坐标。入口实际调用本项目
+`pick_object(..., xyz_only=True)`，不读取关节、不运行 IK、不发送运动：
+
+```bash
+./scripts/run_thor_image_gripper_xyz.sh \
+  --config thor.example.json \
+  --left-image /path/to/left.jpg \
+  --right-image /path/to/right.jpg \
+  --arm auto \
+  --output-json /tmp/gripper_xyz.json
+```
+
+`gripper_target.final_tcp_body_xyz_m` 是最终输出。`auto` 根据瓶体机身 y 坐标
+选择同侧手臂：y 大于等于 0 选左臂，y 小于 0 选右臂；也可以显式指定
+`--arm left` 或 `--arm right`。输出会记录
+`orientation_policy=preserve_initial` 和 `orientation_commanded=false`。
+
+本项目运动学模型的 `left_tcp_link/right_tcp_link` 定义在两指抓取中心，导出
+的运动链已经包含腕部到 TCP 的固定 `0.05 m` 偏移。因此最终 TCP XYZ 等于
+估计的瓶体抓取中心 XYZ；不能再次减去 `0.05 m`，否则会重复应用工具偏移。
+后续 IK 路径也从机器人当前末端位姿读取初始旋转，并在预抓取、抓取、抬升和
+后撤全程保持该旋转不变。
+
+`calibration.metric_gripper_xyz_approved` 只有在双目标定、相机到机身外参和
+夹爪 TCP 外参三项均已验证时才为 `true`。示例中的
+`gripper_tcp_calibration_validated=false` 表示当前 0.05 m 仍是模型值，尚未
+通过真机测量确认；这不阻止离线输出，但禁止把结果当作已批准的真机坐标。
+
+若有人工测量的最终夹爪 TCP 真值，可增加
+`--expected-gripper-xyz-m X Y Z --tolerance-m 0.03` 进行误差验收。这里只
+输出目标，不代表目标已通过 IK 或碰撞检查。
 
 ## 仓库隔离验收
 
