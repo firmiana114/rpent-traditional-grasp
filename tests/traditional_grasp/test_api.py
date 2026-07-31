@@ -76,7 +76,10 @@ def test_original_api_names_complete_simulated_pick() -> None:
     assert approach["approached"] is True
     assert pick["success"] is True
     assert pick["status"] == "executed"
+    assert pick["verification"] == "gripper_contact"
     assert pick["execution"]["simulated"] is True
+    assert pick["execution"]["grasp_verified"] is True
+    assert pick["execution"]["lift_completed"] is True
     assert pick["execution"]["max_joint_step_rad"] >= 0.0
     assert {
         "success",
@@ -126,6 +129,24 @@ def test_pick_object_xyz_stage_stops_before_ik_and_motion() -> None:
     assert result["orientation_policy"] == "preserve_initial"
     assert api.context.ik_path is None
     assert api.context.execution is None
+
+
+def test_plan_pick_object_serializes_path_without_execution() -> None:
+    api = make_api()
+
+    result = api.plan_pick_object(
+        object_prompt="bottle",
+        arm_side="left",
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "planned"
+    assert result["motion_commanded"] is False
+    assert result["selected_arm_side"] == "left"
+    assert len(result["plan"]["positions_rad"]) > 0
+    assert result["plan"]["waypoint_names"].count("grasp") == 1
+    assert api.context.execution is None
+    assert api.executor.executed_paths == []
 
 
 def test_pick_object_public_signature_matches_rpent() -> None:

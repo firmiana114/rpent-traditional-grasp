@@ -283,63 +283,16 @@ class TraditionalGraspAPI:
         bbox_format: str,
     ) -> dict[str, object]:
         """Run the replacement internals behind the stable public contract."""
-        target = object_prompt
-        arm = arm_side
-        if arm not in {"auto", "left", "right"}:
-            raise ValueError("arm_side 必须是 auto、left 或 right")
-        search = self.search_object(
-            object_prompt=target,
+        plan = self.plan_pick_object(
+            object_prompt=object_prompt,
+            arm_side=arm_side,
             bbox=bbox,
             bbox_format=bbox_format,
         )
-        if not search["found"]:
-            return {
-                "success": False,
-                "action": "pick_object",
-                "object_prompt": target,
-                "requested_arm_side": arm,
-                "selected_arm_side": None,
-                "status": "detect_failed",
-                "error": "traditional grasp detector did not find the target",
-                "verification": None,
-                "execution": None,
-                "bbox": search.get("bbox"),
-                **_empty_pick_artifacts(),
-                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
-                "detector_result": search,
-            }
-        assert self.context.estimate is not None
-        candidates = ["left", "right"] if arm == "auto" else [arm]
-        paths: list[IKPath] = []
-        errors: dict[str, str] = {}
-        for candidate in candidates:
-            try:
-                paths.append(
-                    self.plan_contact_grasp(self.context.estimate, candidate)
-                )
-            except Exception as exc:
-                errors[candidate] = str(exc)
-                logger.warning(
-                    "候选手臂规划失败: arm=%s reason=%s", candidate, exc
-                )
-        if not paths:
-            return {
-                "success": False,
-                "action": "pick_object",
-                "object_prompt": target,
-                "requested_arm_side": arm,
-                "selected_arm_side": None,
-                "status": "plan_failed",
-                "error": "no continuous IK path",
-                "verification": None,
-                "execution": None,
-                "bbox": search.get("bbox"),
-                **_empty_pick_artifacts(),
-                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
-                "arm_errors": errors,
-            }
-        selected = min(paths, key=lambda item: item.score)
-        self.context.ik_path = selected
+        if not plan["success"]:
+            return plan
+        selected = self.context.ik_path
+        assert selected is not None
 
         if self.config.safety.mode == "shadow" or (
             self.executor.is_hardware and self.config.safety.mode != "live"
@@ -353,8 +306,8 @@ class TraditionalGraspAPI:
             return {
                 "success": False,
                 "action": "pick_object",
-                "object_prompt": target,
-                "requested_arm_side": arm,
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
                 "selected_arm_side": selected.arm,
                 "status": "motion_gated",
                 "error": "non-live mode does not execute robot motion",
@@ -365,7 +318,7 @@ class TraditionalGraspAPI:
                     "mode": self.config.safety.mode,
                     "path_points": len(selected.positions),
                 },
-                "bbox": search.get("bbox"),
+                "bbox": plan.get("bbox"),
                 **_empty_pick_artifacts(),
                 "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
             }
@@ -377,28 +330,151 @@ class TraditionalGraspAPI:
             and evidence.contact_detected
             and evidence.lift_completed
         )
+        verification = "gripper_contact" if picked else "failed"
         return {
             "success": picked,
             "action": "pick_object",
-            "object_prompt": target,
-            "requested_arm_side": arm,
+            "object_prompt": object_prompt,
+            "requested_arm_side": arm_side,
             "selected_arm_side": selected.arm,
             "status": "executed" if picked else "execution_failed",
-            "verification": {
-                "contact_detected": evidence.contact_detected,
-                "lift_completed": evidence.lift_completed,
-                "verified": picked,
-            },
+            "verification": verification,
             "execution": {
                 "planned": True,
                 "executed": evidence.path_executed,
                 "simulated": simulated,
+                "grasp_verified": evidence.contact_detected,
+                "lift_completed": evidence.lift_completed,
+                "retreat_completed": evidence.lift_completed,
+                "path_points": len(selected.positions),
+                "max_joint_step_rad": selected.max_joint_step_rad,
+            },
+            "bbox": plan.get("bbox"),
+            **_empty_pick_artifacts(),
+            "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+        }
+
+    def plan_pick_object(
+        self,
+        *,
+        object_prompt: str,
+        arm_side: str = "auto",
+        bbox: object = None,
+        bbox_format: str = "auto",
+    ) -> dict[str, object]:
+        """Plan one complete pick without commanding robot or gripper motion."""
+        if arm_side not in {"auto", "left", "right"}:
+            raise ValueError("arm_side 必须是 auto、left 或 right")
+        search = self.search_object(
+            object_prompt=object_prompt,
+            bbox=bbox,
+            bbox_format=bbox_format,
+        )
+        if not search["found"]:
+            return {
+                "success": False,
+                "action": "pick_object",
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
+                "selected_arm_side": None,
+                "status": "detect_failed",
+                "error": "traditional grasp detector did not find the target",
+                "verification": None,
+                "execution": None,
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+                "detector_result": search,
+            }
+        assert self.context.estimate is not None
+        candidates = ["left", "right"] if arm_side == "auto" else [arm_side]
+        planned: list[tuple[IKPath, np.ndarray]] = []
+        errors: dict[str, str] = {}
+        for candidate in candidates:
+            try:
+                seed = self.executor.current_joints(candidate)
+                path = self.plan_contact_grasp(
+                    self.context.estimate,
+                    candidate,
+                    current_joints=seed,
+                )
+                planned.append((path, seed))
+            except Exception as exc:
+                errors[candidate] = str(exc)
+                logger.warning(
+                    "候选手臂规划失败: arm=%s reason=%s", candidate, exc
+                )
+        if not planned:
+            return {
+                "success": False,
+                "action": "pick_object",
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
+                "selected_arm_side": None,
+                "status": "planning_failed",
+                "error": "no continuous IK path",
+                "verification": None,
+                "execution": None,
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+                "arm_errors": errors,
+            }
+        selected, seed = min(planned, key=lambda item: item[0].score)
+        self.context.ik_path = selected
+        collision_checked = False
+        collision_detail = "collision checker not configured"
+        if self.collision_checker is not None:
+            collision_checked, collision_detail = self.collision_checker.check_path(
+                selected
+            )
+            if not collision_checked:
+                logger.warning(
+                    "规划路径碰撞检查未通过: arm=%s detail=%s",
+                    selected.arm,
+                    collision_detail,
+                )
+        observation = self.context.observation
+        logger.info(
+            "无运动抓取计划完成: target=%s arm=%s points=%d "
+            "collision_checked=%s motion=False",
+            object_prompt,
+            selected.arm,
+            len(selected.positions),
+            collision_checked,
+        )
+        return {
+            "success": True,
+            "action": "pick_object",
+            "object_prompt": object_prompt,
+            "requested_arm_side": arm_side,
+            "selected_arm_side": selected.arm,
+            "status": "planned",
+            "verification": None,
+            "execution": {
+                "planned": True,
+                "executed": False,
                 "path_points": len(selected.positions),
                 "max_joint_step_rad": selected.max_joint_step_rad,
             },
             "bbox": search.get("bbox"),
             **_empty_pick_artifacts(),
-            "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+            "backend": "rpent_traditional_grasp.TraditionalGraspAPI.plan_pick_object",
+            "motion_commanded": False,
+            "capture_timestamp_s": (
+                observation.timestamp_s if observation is not None else 0.0
+            ),
+            "collision_checked": collision_checked,
+            "collision_check_detail": collision_detail,
+            "plan": {
+                "arm_side": selected.arm,
+                "joint_names": list(selected.joint_names),
+                "seed_q": np.asarray(seed, dtype=np.float64).tolist(),
+                "positions_rad": [position.tolist() for position in selected.positions],
+                "waypoint_names": list(selected.waypoint_names),
+                "max_joint_step_rad": selected.max_joint_step_rad,
+                "score": selected.score,
+            },
         }
 
     def preview_pick_object_xyz(
@@ -545,11 +621,16 @@ class TraditionalGraspAPI:
         return body[0] if scalar else body
 
     def plan_contact_grasp(
-        self, estimate: BottleEstimate, arm: str
+        self,
+        estimate: BottleEstimate,
+        arm: str,
+        current_joints: np.ndarray | None = None,
     ) -> IKPath:
         """Original fine-grained name: fixed pose plus continuous TRAC-IK."""
         solver = self.ik_solvers[arm]
-        current_joints = self.executor.current_joints(arm)
+        if current_joints is None:
+            current_joints = self.executor.current_joints(arm)
+        current_joints = np.asarray(current_joints, dtype=np.float64)
         start_pose = solver.forward(current_joints)
         sparse = plan_fixed_side_grasp(
             estimate,
@@ -632,5 +713,10 @@ def _empty_pick_artifacts() -> dict[str, None]:
         "bbox_image_path": None,
         "depth_image_path": None,
         "raw_depth_image_path": None,
+        "metric_depth_path": None,
+        "point_cloud_path": None,
+        "point_cloud_frame": None,
+        "point_count": None,
+        "point_cloud_bounds_m": None,
         "result_image_path": None,
     }

@@ -85,6 +85,40 @@ class MockArmExecutor:
         self.gripper_closed[arm] = False
 
 
+class PlanningArmExecutor:
+    """Mutable joint-state source that rejects every motion command."""
+
+    def __init__(self) -> None:
+        self._joints = {
+            "left": np.zeros(7, dtype=np.float64),
+            "right": np.zeros(7, dtype=np.float64),
+        }
+
+    @property
+    def is_hardware(self) -> bool:
+        return False
+
+    def update_joint_state(self, current_q: np.ndarray) -> None:
+        values = np.asarray(current_q, dtype=np.float64)
+        if values.shape != (14,) or not np.all(np.isfinite(values)):
+            raise ValueError("规划关节状态必须是 14 个有限数值")
+        self._joints["left"] = values[:7].copy()
+        self._joints["right"] = values[7:].copy()
+        logger.info("规划关节状态已更新: joints=14 motion=False")
+
+    def current_joints(self, arm: str) -> np.ndarray:
+        return self._joints[arm].copy()
+
+    def execute_joint_path(self, path: IKPath) -> None:
+        raise RuntimeError("规划执行器禁止发送关节路径")
+
+    def close_gripper(self, arm: str) -> bool:
+        raise RuntimeError(f"规划执行器禁止闭合夹爪: arm={arm}")
+
+    def open_gripper(self, arm: str) -> None:
+        raise RuntimeError(f"规划执行器禁止张开夹爪: arm={arm}")
+
+
 class AlwaysSafeCollisionChecker:
     """Explicit test-only collision checker."""
 

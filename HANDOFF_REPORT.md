@@ -3,7 +3,7 @@
 ## 项目整体描述
 
 本项目是 RPent 的独立传统瓶体抓取子项目，用于 AIR G1 双臂机器人瓶装物侧抓。
-它可嵌套部署到上层 `traditional_grasp/`，但不作 submodule、不修改父项目。
+它嵌套部署到父项目目录但不作 submodule；父项目以独立提交接入其规划服务。
 
 核心链路为：双目矫正 → CREStereo 深度 → YOLO-World/SAM2 → 瓶心估计 →
 固定侧抓路径 → TRAC-IK 连续 7 轴逆解 → 碰撞检查 → 执行和抓取验证。
@@ -12,8 +12,8 @@
 
 - 高层兼容接口：`search_object`、`approach_object`、`pick_object`、
   `verify_grasp`。
-- 核心替代目标是 RPent 的 `pick_object` 逻辑；当前只在独立仓库按该方法的
-  感知、规划、执行职责分阶段验收，尚未接入或修改父项目 RPent。
+- 核心替代目标是 RPent 的 `pick_object` 逻辑；本项目提供无运动持久规划服务，
+  父项目负责后端选择、控制器所有权、计划复验和执行。
 - `pick_object` 已锁定原仅关键字参数及主要结果字段；阶段测试改走内部预览
   方法，不向未来 RPent 调用暴露测试开关。
 - 细粒度接口：`compute_depth_crestereo`、`segment_object`、
@@ -80,8 +80,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 当前状态与已验证事实
 
-- 本机 Linux/aarch64 容器与 Thor 均通过 C++ 构建、左右臂 CTest 和 35 项
-  pytest；Thor 使用无 sudo 依赖构建，上层 RPent 的受控状态未被本项目改动。
+- 本机 Linux/aarch64 容器通过 C++ 构建、左右臂 CTest 和 38 项 pytest；父项目
+  16 项测试在 Thor 临时工作树通过，全程未发送机器人运动。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
@@ -129,8 +129,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   的样本通过误差阈值前，不得把可重复 XYZ 等同于物理坐标准确。
 - 瓶体商标区域在反光、透明瓶、遮挡和低纹理场景的深度成功率尚未实测。
 - 机器人自碰撞、环境碰撞和路径扫掠检查器尚未实现；`live` 因此保持阻断。
-- 上层 RPent 到高层四接口的最终接线未完成；上层当前有人并行修改，禁止直接
-  改其受控文件。细粒度接口的文件型参数兼容需求也未确认。
+- 父项目已在独立提交接入 `WuxiAdapter.pick_object` 可选后端；默认仍是旧后端，
+  尚未做 RPent 进程与真机联调。细粒度接口的文件型参数兼容需求也未确认。
 - 手爪闭合量、接触阈值、TCP 精确外参和真实瓶径允许范围尚未做真机标定。
 - 必须先用无需底盘的可达近距离样本验证完整 IK；目标超限时是接入
   `approach_object` 底盘靠近还是直接失败，尚待确定且本轮没有底盘执行授权。
@@ -139,10 +139,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 注意事项
 
-- 上层 RPent 只允许在本机 `.git/info/exclude` 加 `/traditional_grasp/`；
-  同步前后必须核对其分支、HEAD 和 `git status --short` 完全一致。
-- Thor 父项目当前另有 `arm_service.py`、`vision_service.py` 并行未提交修改，
-  时间早于本轮服务器复验；本项目未改动、暂存或覆盖它们。
-- 不得在上层 RPent 执行本项目提交、拉取、切分支或 submodule 操作。
+- 父、子项目必须分别提交和同步；子项目路径仍由父项目本地排除规则隔离。
+- 父项目和子项目使用独立 Git 提交；同步前后都要核对各自 HEAD 和工作区状态。
+- 子项目不作 submodule，不要在父项目提交中纳入 `traditional_grasp/` 内容。
 - 不得把示例配置直接切为 `live`，不得绕过碰撞检查和标定验证布尔门禁。
 - TRAC-IK 只负责运动学求解，不提供碰撞安全保证。

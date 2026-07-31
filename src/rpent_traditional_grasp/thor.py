@@ -13,7 +13,7 @@ import numpy as np
 
 from rpent_traditional_grasp.api import TraditionalGraspAPI
 from rpent_traditional_grasp.config import TraditionalGraspConfig
-from rpent_traditional_grasp.execution import MockArmExecutor
+from rpent_traditional_grasp.execution import ArmExecutor, MockArmExecutor
 from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import IKPath
@@ -251,6 +251,7 @@ def build_thor_shadow_api(
     right_image: str | Path | None = None,
     online_camera: bool = False,
     perception_only: bool = False,
+    planning_executor: ArmExecutor | None = None,
 ) -> TraditionalGraspAPI:
     """Build the real Thor perception stack with simulated, no-motion arms."""
     path = Path(config_path).resolve()
@@ -344,7 +345,7 @@ def build_thor_shadow_api(
         detector=detector,
         segmenter=segmenter,
         ik_solvers=ik_solvers,
-        executor=MockArmExecutor(contact_detected=False),
+        executor=planning_executor or MockArmExecutor(contact_detected=False),
         camera_to_body=camera_to_body,
         collision_checker=None,
     )
