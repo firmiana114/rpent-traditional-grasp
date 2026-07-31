@@ -2,14 +2,11 @@
 
 ## 项目整体描述
 
-本项目是 RPent 的独立传统瓶体抓取子项目，目标是在 AIR G1 双臂机器人上完成
-不依赖 GraspNet 的瓶装物侧抓。它是独立 Git 仓库，可嵌套部署到上层 RPent 的
-`traditional_grasp/`，但不作为 submodule，也不修改上层仓库的受控文件、分支、
-索引或远端。
+本项目是 RPent 的独立传统瓶体抓取子项目，用于 AIR G1 双臂机器人瓶装物侧抓。
+它可嵌套部署到上层 `traditional_grasp/`，但不作 submodule、不修改父项目。
 
-核心链路为：双目取帧和矫正 → CREStereo 深度 → YOLO-World 目标框 →
-SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固定侧抓笛卡尔路径 →
-官方 TRAC-IK 连续 7 轴逆解 → 外部碰撞检查 → 执行和抓取验证。
+核心链路为：双目矫正 → CREStereo 深度 → YOLO-World/SAM2 → 瓶心估计 →
+固定侧抓路径 → TRAC-IK 连续 7 轴逆解 → 碰撞检查 → 执行和抓取验证。
 
 ## 核心功能与接口
 
@@ -20,8 +17,7 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 - `pick_object` 已锁定原仅关键字参数及主要结果字段；阶段测试改走内部预览
   方法，不向未来 RPent 调用暴露测试开关。
 - 细粒度接口：`compute_depth_crestereo`、`segment_object`、
-  `mask_depth_to_pointcloud`、`pointcloud_to_body`、
-  `plan_contact_grasp`、`execute_grasp`。
+  `mask_depth_to_pointcloud`、`pointcloud_to_body`、规划和执行。
 - `offline` 用于完整模拟闭环；`shadow` 使用真实感知/IK但绝不发运动命令；
   `live` 必须同时通过运动授权、三项标定和碰撞检查门禁。
 - 抓取执行顺序固定为张手、到达预抓取、到达抓取位、闭合/接触、抬升、后撤。
@@ -35,22 +31,21 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 - `perception.py`：YOLO-World 检测与 SAM2 框提示分割适配。
 - `geometry.py`：商标带、鲁棒深度、瓶径和三维瓶心估计。
 - `planning.py`：固定侧抓姿态和笛卡尔插值。
-- `ik.py`：持久 TRAC-IK 子进程、上一解播种、FK 残差和关节变化诊断。
+- `ik.py`：持久 TRAC-IK 子进程、连续求解、FK 残差和关节变化诊断。
+- `diagnostics.py` 及对应脚本：无运动精确位姿、仅位置、链长和连续路径诊断。
 - `execution.py`：碰撞检查协议、执行器协议、模拟执行器与接触证据。
 - `thor.py`：Thor 相机、现有模型资源和注入式 CapX/碰撞检查适配。
 - `native/`：官方 TRAC-IK 核心、ROS2 最小兼容层和 G1 文本链求解器。
 - `robot/`：经核对的 G1 URDF 与左右 7 轴运动链。
 - `scripts/`：运动链导出、Thor 无 sudo 原生构建、影子运行入口。
-- `xyz.py` 与 `scripts/run_image_to_xyz.py`：左右图片到相机/机身 XYZ 的
-  物体/最终夹爪 TCP 结构化验收及可选真值误差门禁；不启动 IK 或控制器。
+- `xyz.py` 及对应脚本：图片到物体/夹爪 TCP XYZ 验收；不启动 IK 或控制器。
 - `tests/traditional_grasp/`：几何、配置、安全、接口闭环和真实原生 IK 测试。
 
 ## 技术栈与外部依赖
 
 - Python 3.10–3.12、NumPy、OpenCV、Ultralytics、SAM2、ONNX Runtime。
 - C++17、CMake/Ninja、Eigen3、Orocos KDL、NLopt。
-- `traclabs/trac_ik@90162ac2...`，BSD-3-Clause，源码保留在
-  `native/vendor/trac_ik/`。
+- `traclabs/trac_ik@90162ac2...`，BSD-3-Clause，源码在 `native/vendor/`。
 - reBot 仅参考流程概念，未复制其源码和 GraspNet；详见 `UPSTREAM.md`。
 - Thor 的模型权重均为外部资源，不进入本仓库。
 
@@ -59,8 +54,7 @@ SAM2 掩码 → 商标中央带鲁棒深度 → 圆柱瓶身中心估计 → 固
 - 配置入口：`thor.example.json`；双目标定和相机外参分别位于 `config/`。
 - 原生入口：`native/build/g1_trac_ik`，每条手臂保持一个求解进程。
 - Thor 入口：`scripts/run_thor_shadow.py`，默认只运行 `search` 影子流程。
-- 日志入口：`logging.py`，默认 INFO；关键配置、感知、几何、IK、自适应细分、
-  碰撞门禁和执行阶段均记录诊断上下文，异常保留原始异常链。
+- 日志默认 INFO；关键配置、感知、IK、门禁和执行均留上下文及原始异常链。
 - 三维点先位于左相机坐标系，再通过配置外参变换到 `torso_link` 机身坐标系。
 
 ## 常用命令
@@ -81,14 +75,13 @@ PYTHONPATH=src python -m pytest -q
 ./scripts/run_thor_image_gripper_xyz.sh \
   --left-image /path/to/left.jpg \
   --right-image /path/to/right.jpg
+PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 ```
 
 ## 当前状态与已验证事实
 
-- 本机 Linux/aarch64 容器已通过 C++ 无警告构建、左右臂 CTest 和 32 项
-  pytest；Thor 正式目录使用现有原生二进制同样为 32 项全部通过。
-- Thor 已将本项目克隆为独立嵌套仓库；无 sudo 本地依赖构建和左右臂原生自检
-  通过，上层 RPent 的分支、HEAD、索引树和工作区状态在部署前后完全一致。
+- 本机 Linux/aarch64 容器与 Thor 均通过 C++ 构建、左右臂 CTest 和 35 项
+  pytest；Thor 使用无 sudo 依赖构建，上层 RPent 的受控状态未被本项目改动。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
@@ -115,8 +108,17 @@ PYTHONPATH=src python -m pytest -q
   左臂，输出 TCP `[0.5242, 0.0841, 0.0618]` m，未启动 IK 或控制器。
 - 验证图片是 `../logs/20260730-15:39:59_air_robot_task_s0/sensor/` 中同时间戳
   `20260730_154013_543214444` 的 `left_*.jpg` 与 `right_*.jpg`。
-- 该样本瓶心为机身坐标 `[0.524, 0.084, 0.062]` m；移除 `0.18 rad` 门限后
-  已复验，左右臂分别在预抓取第 13/19、16/29 段因 TRAC-IK 无解而规划失败。
+- 图像时刻早于控制器启动约 63 秒，没有同步真实关节状态；诊断使用相邻任务
+  自动回零后的真实关节角做代理，零位与代理状态的单点结果一致。
+- 左右臂四个稀疏路径点在精确姿态和仅位置诊断中均无解；固定夹爪姿态不是
+  该样本的首要阻塞。
+- 运动链以 `torso_link` 为根，串联杆长理论上限均为 `0.460394 m`；抓取和
+  抬升点超出左臂上限 `67–92 mm`、右臂上限 `98–122 mm`。
+- 连续路径首次失败点：左臂预抓取 `14/19`、XYZ
+  `[0.3785,0.1006,0.0572]` m；右臂 `17/30`、XYZ
+  `[0.3493,-0.0171,0.0547]` m。
+- CapX 的 FK 以 `pelvis` 为根，本项目以 `torso_link` 为根；应用 URDF 固定
+  平移 `[-0.0039635,0,0.044]` m 后左右 FK 完全一致，TCP/运动链未发现错误。
 
 ## 未确认、阻塞问题与下一步
 
@@ -130,10 +132,10 @@ PYTHONPATH=src python -m pytest -q
 - 上层 RPent 到高层四接口的最终接线未完成；上层当前有人并行修改，禁止直接
   改其受控文件。细粒度接口的文件型参数兼容需求也未确认。
 - 手爪闭合量、接触阈值、TCP 精确外参和真实瓶径允许范围尚未做真机标定。
-- 必须确认目标超出当前手臂工作区时，是由 `approach_object` 接入底盘靠近，
-  还是要求选取/摆放到无需底盘的近距离样本；本轮没有底盘执行授权。
-- 下一步依次为：确认底盘靠近策略、标定验收、碰撞检查接入、上层持有者完成
-  控制器注入、限速小步真机验证。
+- 必须先用无需底盘的可达近距离样本验证完整 IK；目标超限时是接入
+  `approach_object` 底盘靠近还是直接失败，尚待确定且本轮没有底盘执行授权。
+- 下一步依次为：同步采集图片与关节状态、可达样本 shadow、标定验收、
+  碰撞检查接入、上层持有者注入控制器、限速小步真机验证。
 
 ## 注意事项
 

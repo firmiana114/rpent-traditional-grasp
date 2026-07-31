@@ -159,6 +159,32 @@ YOLO-World 检测，单独验证分割、双目深度和坐标变换。`--output
 `--expected-gripper-xyz-m X Y Z --tolerance-m 0.03` 进行误差验收。这里只
 输出目标，不代表目标已通过 IK 或碰撞检查。
 
+## 无运动 IK 可达性诊断
+
+在不连接 CapX 控制器、不发送机器人运动的前提下，可以分别检查精确位姿、
+仅位置约束和连续路径逆运动学。`--left-seed-rad` 与
+`--right-seed-rad` 应使用同一采样时刻读取的真实七轴关节角；若只能使用代理
+状态，必须通过 `--seed-source` 明确记录来源，不能把零位或相邻任务状态称为
+当前真实状态：
+
+```bash
+PYTHONPATH=src python scripts/diagnose_ik_reachability.py \
+  --config thor.example.json \
+  --target-body-xyz-m 0.52 0.08 0.06 \
+  --left-seed-rad 0 0 0 0 0 0 0 \
+  --right-seed-rad 0 0 0 0 0 0 0 \
+  --seed-source explicit_zero_diagnostic_only \
+  --ik-timeout-s 0.1 \
+  --max-adaptive-subdivisions 0 \
+  --output-json /tmp/ik_reachability.json
+```
+
+报告同时从导出的运动链计算肩部位置和串联杆长理论上限，给出每个路径点的
+肩部距离与余量。仅位置求解会忽略旋转约束，只用于区分“固定姿态阻挡”和
+“位置/运动链不可达”；生产规划仍完整保持初始夹爪姿态。
+`--max-adaptive-subdivisions 0` 可快速定位连续路径的首个失败采样点，正常规划
+仍使用配置中的自适应细分次数。
+
 ## 仓库隔离验收
 
 同步前后分别在上层 RPent 运行以下只读命令，分支、HEAD 与状态输出应一致：

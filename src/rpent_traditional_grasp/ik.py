@@ -83,6 +83,43 @@ class TracIKProcess:
         )
         return _parse_ok_joints(response)
 
+    def solve_bounded(
+        self,
+        seed: np.ndarray,
+        target: Pose,
+        bounds: np.ndarray,
+    ) -> np.ndarray:
+        """Solve with diagnostic Cartesian tolerances; production uses ``solve``."""
+        seed_array = _validate_joints(seed)
+        bound_array = np.asarray(bounds, dtype=np.float64)
+        if bound_array.shape != (6,):
+            raise ValueError("IK bounds 必须包含 6 个元素")
+        if not np.all(np.isfinite(bound_array)) or np.any(bound_array < 0.0):
+            raise ValueError("IK bounds 必须是非负有限数值")
+        values = [
+            *seed_array,
+            *np.asarray(target.position_m, dtype=np.float64),
+            *np.asarray(target.rotation, dtype=np.float64).reshape(9),
+            *bound_array,
+        ]
+        response = self._request(
+            "IK_BOUNDED "
+            + " ".join(f"{value:.17g}" for value in values)
+        )
+        return _parse_ok_joints(response)
+
+    def solve_position_only(
+        self,
+        seed: np.ndarray,
+        target: Pose,
+    ) -> np.ndarray:
+        """Diagnostic-only solve that ignores rotation while preserving XYZ."""
+        return self.solve_bounded(
+            seed,
+            target,
+            np.array([0.0, 0.0, 0.0, np.pi, np.pi, np.pi]),
+        )
+
     def forward(self, joints: np.ndarray) -> Pose:
         values = _validate_joints(joints)
         response = self._request(
@@ -256,13 +293,17 @@ def solve_continuous_path(
                 subdivisions += 1
                 continue
             logger.exception(
-                "连续逆解失败: arm=%s index=%d waypoint=%s",
+                "连续逆解失败: arm=%s index=%d waypoint=%s "
+                "target=[%.4f,%.4f,%.4f]",
                 arm,
                 index,
                 waypoint.name,
+                *waypoint.pose.position_m,
             )
             raise RuntimeError(
-                f"{arm} 臂在 {waypoint.name} 无连续逆解"
+                f"{arm} 臂在 {waypoint.name} 无连续逆解: "
+                f"target_body_xyz_m="
+                f"{waypoint.pose.position_m.tolist()}"
             ) from exc
         step = float(np.max(np.abs(solution - current)))
         position_error = float(

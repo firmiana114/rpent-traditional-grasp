@@ -133,6 +133,19 @@ KDL::Frame read_frame(std::istringstream& input)
   return KDL::Frame(rotation, position);
 }
 
+KDL::Twist read_bounds(std::istringstream& input)
+{
+  const KDL::Vector translation(
+    read_double(input, "bounds.translation_x"),
+    read_double(input, "bounds.translation_y"),
+    read_double(input, "bounds.translation_z"));
+  const KDL::Vector rotation(
+    read_double(input, "bounds.rotation_x"),
+    read_double(input, "bounds.rotation_y"),
+    read_double(input, "bounds.rotation_z"));
+  return KDL::Twist(translation, rotation);
+}
+
 void write_joints(const KDL::JntArray& joints)
 {
   std::cout << "OK";
@@ -252,6 +265,17 @@ int main(int argc, char** argv)
           KDL::JntArray solution(7);
           if (solver.CartToJnt(seed, target, solution) < 0)
             throw std::runtime_error("no IK solution");
+          write_joints(solution);
+          continue;
+        }
+        if (command == "IK_BOUNDED")
+        {
+          const KDL::JntArray seed = read_joints(input);
+          const KDL::Frame target = read_frame(input);
+          const KDL::Twist bounds = read_bounds(input);
+          KDL::JntArray solution(7);
+          if (solver.CartToJnt(seed, target, solution, bounds) < 0)
+            throw std::runtime_error("no bounded IK solution");
           write_joints(solution);
           continue;
         }

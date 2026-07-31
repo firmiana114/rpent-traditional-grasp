@@ -105,3 +105,20 @@ def test_continuous_path_records_large_joint_step_without_rejecting() -> None:
 
     assert path.max_joint_step_rad == pytest.approx(0.4)
     assert path.waypoint_names == ["large-step"]
+
+
+@pytest.mark.parametrize("arm", ["left", "right"])
+def test_standalone_trac_ik_position_only_diagnostic(arm: str) -> None:
+    root = Path(__file__).parents[2]
+    binary = root / "native/build/g1_trac_ik"
+    chain = root / f"robot/chains/g1_{arm}_arm.chain"
+    if not binary.exists():
+        pytest.skip("standalone TRAC-IK binary is only present in Linux build")
+    expected_joints = np.array([0.2, -0.15, 0.1, 0.45, -0.1, 0.2, 0.05])
+    with TracIKProcess(binary, chain, arm, timeout_s=0.1) as solver:
+        reachable = solver.forward(expected_joints)
+        target = Pose(reachable.position_m, np.eye(3))
+        solution = solver.solve_position_only(np.zeros(7), target)
+        actual = solver.forward(solution)
+
+    assert np.linalg.norm(actual.position_m - target.position_m) < 1e-4
