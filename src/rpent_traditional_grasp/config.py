@@ -28,6 +28,7 @@ class ResourceConfig:
     crestereo_model: str = "crestereo/crestereo_eth3d.pth"
     stereo_calibration: str = "config/stereo_calibration.json"
     camera_to_body: str = "config/camera_to_body.json"
+    gripper_specification: str = "config/g1d_dex1_1_nominal.json"
     robot_urdf: str = "robot/g1_body29_hand14.urdf"
     left_ik_binary: str = "native/build/g1_trac_ik"
     right_ik_binary: str = "native/build/g1_trac_ik"
@@ -69,7 +70,7 @@ class PlannerConfig:
     ik_tolerance: float = 1e-5
     fk_position_tolerance_m: float = 0.012
     fk_rotation_tolerance_rad: float = 0.08
-    tip_offset_m: float = 0.05
+    tip_offset_m: float = 0.150215608966
     max_reach_m: float = 0.78
     preferred_arm: str = "auto"
     # TCP axes in torso/body frame. Columns are TCP x/y/z.
@@ -167,6 +168,7 @@ class TraditionalGraspConfig:
             "crestereo_model": os.getenv("RPENT_CRESTEREO_MODEL"),
             "stereo_calibration": os.getenv("RPENT_STEREO_CALIBRATION"),
             "camera_to_body": os.getenv("RPENT_CAMERA_TO_BODY"),
+            "gripper_specification": os.getenv("RPENT_GRIPPER_SPECIFICATION"),
             "robot_urdf": os.getenv("RPENT_G1_URDF"),
             "left_ik_binary": os.getenv("RPENT_LEFT_TRAC_IK_BINARY"),
             "right_ik_binary": os.getenv("RPENT_RIGHT_TRAC_IK_BINARY"),
@@ -193,6 +195,8 @@ class TraditionalGraspConfig:
             raise ValueError("label_band_fraction 必须位于 (0, 1]")
         if self.perception.min_depth_m >= self.perception.max_depth_m:
             raise ValueError("min_depth_m 必须小于 max_depth_m")
+        if not 0.0 < self.planner.tip_offset_m < 0.3:
+            raise ValueError("tip_offset_m 必须位于 (0, 0.3) m")
         if len(self.planner.left_tcp_rotation) != 9:
             raise ValueError("left_tcp_rotation 必须包含 9 个元素")
         if len(self.planner.right_tcp_rotation) != 9:

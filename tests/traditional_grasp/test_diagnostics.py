@@ -30,7 +30,7 @@ def test_exported_chain_geometry_has_expected_torso_reach_bound() -> None:
         [0.0039563, -0.10021, 0.24778],
     )
     assert left.serial_length_upper_bound_m == pytest.approx(
-        0.4603940645,
+        0.560609673466,
         abs=1e-10,
     )
     assert right.serial_length_upper_bound_m == pytest.approx(

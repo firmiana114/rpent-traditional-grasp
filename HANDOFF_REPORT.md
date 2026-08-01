@@ -26,7 +26,7 @@
 ## 主要模块与目录
 
 - `src/rpent_traditional_grasp/api.py`：四接口编排、状态和安全门禁。
-- `config.py`：JSON 配置、路径解析、`live` 安全配置校验。
+- `config.py`/`gripper.py`：配置、安全门与共享 Dex1-1 规格校验。
 - `stereo.py`：双目标定、矫正、外部 CREStereo 适配和深度计算。
 - `perception.py`：YOLO-World 检测与 SAM2 框提示分割适配。
 - `geometry.py`：商标带、鲁棒深度、瓶径和三维瓶心估计。
@@ -80,8 +80,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 当前状态与已验证事实
 
-- 本机 Linux/aarch64 容器通过 C++ 构建、左右臂 CTest 和 38 项 pytest；父项目
-  16 项测试在 Thor 临时工作树通过，全程未发送机器人运动。
+- 既有 Linux/aarch64 容器通过 C++ 构建、左右臂 CTest 和 38 项 pytest；本轮
+  macOS 共享夹爪规格变更通过 34 项 pytest、跳过 6 项原生条件测试，全程无运动。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
@@ -99,9 +99,9 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 - 第一阶段独立图片入口已在 Thor 临时副本用同一历史样本复现；输出相机瓶心
   `[-0.0544, -0.0992, 0.5973]` m、机身瓶心
   `[0.5242, 0.0841, 0.0618]` m。该结果是软件回归基线，不是物理真值。
-- 第二阶段在运动学模型中将夹爪 TCP 定义为两指抓取中心；最终 TCP XYZ 与
-  瓶体抓取中心相同，工具链已有 0.05 m 腕部偏移，不重复补偿。姿态继承初始
-  末端旋转并保持不变；TCP 真机标定门禁当前为 false。
+- 已由厂家 Dex1-1 URDF/网格推导 `0.150215608966 m` 腕部到 TCP 名义偏移，
+  传统运动链与仿真共用 `config/g1d_dex1_1_nominal.json`；该值未做当前真机
+  标定，`gripper_tcp_calibration_validated` 必须保持 false。
 - 第二阶段经内部 `preview_pick_object_xyz` 进入，与 `pick_object` 共用感知
   和目标计算逻辑，并在 IK 和运动前返回。
 - 第二阶段独立入口已在 Thor 临时副本用历史图片完成真实推理回归：自动选择
@@ -112,8 +112,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   自动回零后的真实关节角做代理，零位与代理状态的单点结果一致。
 - 左右臂四个稀疏路径点在精确姿态和仅位置诊断中均无解；固定夹爪姿态不是
   该样本的首要阻塞。
-- 运动链以 `torso_link` 为根，串联杆长理论上限均为 `0.460394 m`；抓取和
-  抬升点超出左臂上限 `67–92 mm`、右臂上限 `98–122 mm`。
+- 更新后的运动链以 `torso_link` 为根，串联杆长理论上限均为 `0.560610 m`；
+  旧历史样本的可达性诊断需用新运动链重新执行，原超限结论不再沿用。
 - 连续路径首次失败点：左臂预抓取 `14/19`、XYZ
   `[0.3785,0.1006,0.0572]` m；右臂 `17/30`、XYZ
   `[0.3493,-0.0171,0.0547]` m。
@@ -132,7 +132,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   环境障碍物碰撞仍因缺少场景模型未实现。
 - 父项目已在独立提交接入 `WuxiAdapter.pick_object` 可选后端；默认仍是旧后端，
   尚未做 RPent 进程与真机联调。细粒度接口的文件型参数兼容需求也未确认。
-- 手爪闭合量、接触阈值、TCP 精确外参和真实瓶径允许范围尚未做真机标定。
+- Dex1-1 型号和厂家模型已高置信确认；驱动量到毫米开口、接触阈值、TCP 精确
+  六自由度外参和真实瓶径允许范围仍未做当前真机标定。
 - 必须先用无需底盘的可达近距离样本验证完整 IK；目标超限时是接入
   `approach_object` 底盘靠近还是直接失败，尚待确定且本轮没有底盘执行授权。
 - 下一步依次为：同步采集图片与关节状态、可达样本 shadow、标定验收、

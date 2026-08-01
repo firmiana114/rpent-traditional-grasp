@@ -144,16 +144,19 @@ YOLO-World 检测，单独验证分割、双目深度和坐标变换。`--output
 `--arm left` 或 `--arm right`。输出会记录
 `orientation_policy=preserve_initial` 和 `orientation_commanded=false`。
 
-本项目运动学模型的 `left_tcp_link/right_tcp_link` 定义在两指抓取中心，导出
-的运动链已经包含腕部到 TCP 的固定 `0.05 m` 偏移。因此最终 TCP XYZ 等于
-估计的瓶体抓取中心 XYZ；不能再次减去 `0.05 m`，否则会重复应用工具偏移。
+本项目运动学模型的 `left_tcp_link/right_tcp_link` 定义在两指抓取中心。厂家
+Dex1-1 URDF 和碰撞网格推导出的腕部到 TCP 名义偏移为 `0.150215608966 m`，
+记录在 `config/g1d_dex1_1_nominal.json`，导出的运动链使用同一数值。因此最终
+TCP XYZ 等于估计的瓶体抓取中心 XYZ；不能再次减去该工具偏移，否则会重复
+应用工具偏移。
 后续 IK 路径也从机器人当前末端位姿读取初始旋转，并在预抓取、抓取、抬升和
 后撤全程保持该旋转不变。
 
 `calibration.metric_gripper_xyz_approved` 只有在双目标定、相机到机身外参和
 夹爪 TCP 外参三项均已验证时才为 `true`。示例中的
-`gripper_tcp_calibration_validated=false` 表示当前 0.05 m 仍是模型值，尚未
-通过真机测量确认；这不阻止离线输出，但禁止把结果当作已批准的真机坐标。
+`gripper_tcp_calibration_validated=false` 表示当前 TCP 仍是厂家模型推导值，
+尚未通过当前真机测量确认；这不阻止离线输出，但禁止把结果当作已批准的
+真机坐标。Dex1-1 驱动指令与实际开口毫米数的映射也仍需真机测量。
 
 若有人工测量的最终夹爪 TCP 真值，可增加
 `--expected-gripper-xyz-m X Y Z --tolerance-m 0.03` 进行误差验收。这里只

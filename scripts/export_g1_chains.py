@@ -9,6 +9,8 @@ import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from rpent_traditional_grasp.gripper import load_gripper_specification
+
 EXPECTED_URDF_SHA256 = (
     "8bbf006633fc50b616f665c7a970780cc296577a0adfd7d28b049e751c238735"
 )
@@ -19,7 +21,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("urdf", type=Path)
     parser.add_argument("output_dir", type=Path)
-    parser.add_argument("--tip-offset-m", type=float, default=0.05)
+    parser.add_argument(
+        "--gripper-specification",
+        type=Path,
+        default=Path("config/g1d_dex1_1_nominal.json"),
+    )
     parser.add_argument(
         "--allow-unknown-urdf",
         action="store_true",
@@ -30,7 +36,7 @@ def main() -> None:
     export_chains(
         args.urdf,
         args.output_dir,
-        args.tip_offset_m,
+        load_gripper_specification(args.gripper_specification).wrist_to_tcp_xyz_m[0],
         args.allow_unknown_urdf,
     )
 

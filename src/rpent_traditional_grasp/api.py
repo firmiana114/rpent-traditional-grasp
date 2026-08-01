@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -13,6 +14,7 @@ from rpent_traditional_grasp.execution import (
     execute_path,
 )
 from rpent_traditional_grasp.geometry import estimate_bottle_center
+from rpent_traditional_grasp.gripper import load_gripper_specification
 from rpent_traditional_grasp.ik import IKSolver, solve_continuous_path
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import (
@@ -59,12 +61,35 @@ class TraditionalGraspAPI:
         collision_checker: CollisionChecker | None = None,
     ) -> None:
         config.validate()
+        gripper_spec_path = Path(config.resources.gripper_specification)
+        if not gripper_spec_path.is_absolute():
+            gripper_spec_path = Path(__file__).resolve().parents[2] / gripper_spec_path
+        gripper_specification = load_gripper_specification(gripper_spec_path)
+        if not np.isclose(
+            config.planner.tip_offset_m,
+            gripper_specification.wrist_to_tcp_xyz_m[0],
+            atol=1e-12,
+        ):
+            raise ValueError(
+                "planner.tip_offset_m 与夹爪规格 wrist_yaw_to_tcp 不一致: "
+                f"planner={config.planner.tip_offset_m:.12f} "
+                f"spec={gripper_specification.wrist_to_tcp_xyz_m[0]:.12f}"
+            )
+        if (
+            config.safety.gripper_tcp_calibration_validated
+            and not gripper_specification.is_robot_validated
+        ):
+            raise ValueError(
+                "gripper_tcp_calibration_validated 与夹爪规格状态冲突: "
+                f"status={gripper_specification.status}"
+            )
         if set(ik_solvers) != {"left", "right"}:
             raise ValueError("ik_solvers 必须同时提供 left 和 right")
         transform = np.asarray(camera_to_body, dtype=np.float64)
         if transform.shape != (4, 4):
             raise ValueError("camera_to_body 必须是 4x4")
         self.config = config
+        self.gripper_specification = gripper_specification
         self.stereo_source = stereo_source
         self.detector = detector
         self.segmenter = segmenter
@@ -75,10 +100,13 @@ class TraditionalGraspAPI:
         self.context = PipelineContext()
         self._last_target: str | None = None
         logger.info(
-            "传统抓取 API 已初始化: mode=%s hardware=%s collision_required=%s",
+            "传统抓取 API 已初始化: mode=%s hardware=%s collision_required=%s "
+            "gripper=%s gripper_spec_status=%s",
             config.safety.mode,
             executor.is_hardware,
             config.safety.collision_check_required,
+            gripper_specification.model,
+            gripper_specification.status,
         )
 
     def close(self) -> None:

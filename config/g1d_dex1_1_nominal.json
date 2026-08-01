@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "robot_model": "Unitree G1-D",
+  "gripper_model": "Unitree Dex1-1",
+  "status": "manufacturer_nominal_unvalidated",
+  "source": {
+    "manufacturer_repository": "unitreerobotics/unitree_ros",
+    "manufacturer_urdf": "robots/g1_description/g1_29dof_mode_15_with_dex1_1.urdf",
+    "field_end_effector_name": "dex1",
+    "field_command_topic": "rt/dex1/{side}/cmd",
+    "field_state_topic": "rt/dex1/{side}/state"
+  },
+  "kinematics": {
+    "wrist_yaw_to_base": {
+      "xyz_m": [0.0415, 0.0, 0.0],
+      "rpy_rad": [0.0, 0.0, 0.0]
+    },
+    "base_to_tcp": {
+      "xyz_m": [0.108715608966, 0.0, 0.0],
+      "rpy_rad": [0.0, 0.0, 0.0],
+      "definition": "area_weighted_centroid_between_inward_collision_faces"
+    },
+    "wrist_yaw_to_tcp": {
+      "xyz_m": [0.150215608966, 0.0, 0.0],
+      "rpy_rad": [0.0, 0.0, 0.0]
+    }
+  },
+  "finger_joint": {
+    "lower_m": -0.02,
+    "upper_m": 0.0245,
+    "effort_n": 20.0,
+    "velocity_m_s": 0.2
+  },
+  "jaw_inner_gap": {
+    "at_zero_m": 0.045876,
+    "minimum_m": 0.005876,
+    "maximum_m": 0.094876,
+    "model_formula": "at_zero_m + 2 * finger_joint_position_m",
+    "driver_command_mapping_status": "unknown_requires_robot_measurement"
+  },
+  "mesh_sha256": {
+    "Dex1_base_link.STL": "03f1cb02f94d6b280953f6c5a10da2eab6220ea5c301408d3c4decca66c8cdad",
+    "Dex1_finger_link_1.STL": "7cd2ff199556e3955547a34c75ed9ea777fb7d704fc98e7318d0f67e4aaedf5a",
+    "Dex1_finger_link_2.STL": "e8297ce8184c64d34d70cd9d6c7b583fba6a3adae2075523e97fb956ada65eb3",
+    "dex1_col_1.stl": "5edf010f581635fcb4a79fe20cda65a96c95138112ab91d7e79629980f535c92",
+    "dex1_col_2.stl": "0d791ffb8b438bc4a5fd937eab383db4daa62685a73982e852cc559623036ba9"
+  }
+}

@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from rpent_traditional_grasp.config import TraditionalGraspConfig
+from rpent_traditional_grasp.config import PlannerConfig, TraditionalGraspConfig
+from rpent_traditional_grasp.gripper import load_gripper_specification
+
+
+def test_default_tcp_matches_shared_dex1_1_specification() -> None:
+    root = Path(__file__).resolve().parents[2]
+    specification = load_gripper_specification(
+        root / "config/g1d_dex1_1_nominal.json"
+    )
+
+    assert specification.model == "Unitree Dex1-1"
+    assert specification.status == "manufacturer_nominal_unvalidated"
+    assert specification.is_robot_validated is False
+    assert PlannerConfig().tip_offset_m == specification.wrist_to_tcp_xyz_m[0]
+    assert specification.jaw_minimum_m == 0.005876
+    assert specification.jaw_maximum_m == 0.094876
 
 
 def test_live_mode_requires_all_motion_gates() -> None:

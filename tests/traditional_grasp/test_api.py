@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 import numpy as np
+import pytest
 
 from rpent_traditional_grasp.api import TraditionalGraspAPI
 from rpent_traditional_grasp.config import (
@@ -98,6 +99,28 @@ def test_original_api_names_complete_simulated_pick() -> None:
         "backend",
     } <= pick.keys()
     assert verify["verified"] is True
+
+
+def test_nominal_gripper_spec_cannot_be_claimed_as_robot_validated() -> None:
+    api = make_api()
+    api.close()
+    config = api.config
+    config.safety.gripper_tcp_calibration_validated = True
+
+    with pytest.raises(ValueError, match="夹爪规格状态冲突"):
+        TraditionalGraspAPI(
+            config=config,
+            stereo_source=api.stereo_source,
+            detector=api.detector,
+            segmenter=api.segmenter,
+            ik_solvers={
+                "left": MockIKSolver("left"),
+                "right": MockIKSolver("right"),
+            },
+            executor=MockArmExecutor(contact_detected=True),
+            camera_to_body=np.eye(4),
+            collision_checker=AlwaysSafeCollisionChecker(),
+        )
 
 
 def test_no_detection_fails_without_execution() -> None:
