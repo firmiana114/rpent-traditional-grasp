@@ -26,23 +26,16 @@
 
 ## 主要模块与目录
 
-- `src/rpent_traditional_grasp/api.py`：四接口编排、状态和安全门禁。
-- `config.py`/`gripper.py`：配置、安全门与共享 Dex1-1 规格校验。
-- `stereo.py`：双目标定、矫正、外部 CREStereo 适配和深度计算。
-- `perception.py`：YOLO-World 检测与 SAM2 框提示分割适配。
-- `geometry.py`：商标带、鲁棒深度、瓶径和三维瓶心估计。
-- `planning.py`：±30° 内俯仰/偏转组合侧抓、关节桥接和笛卡尔插值。
-- `ik.py`：持久 TRAC-IK 子进程、连续求解、FK 残差和关节变化诊断。
-- `diagnostics.py` 及对应脚本：无运动精确位姿、仅位置、链长和连续路径诊断。
-- `execution.py`：碰撞检查协议、执行器协议、模拟执行器与接触证据。
-- `thor.py`：Thor 相机、现有模型资源和注入式 CapX/碰撞检查适配。
-- `native/`：官方 TRAC-IK 核心、ROS2 最小兼容层和 G1 文本链求解器。
-- `robot/`：经核对的 G1 URDF 与左右 7 轴运动链。
-- `scripts/`：运动链导出、Thor/macOS 原生构建、影子运行入口。
-- `xyz.py` 及对应脚本：图片到物体/夹爪 TCP XYZ 验收；不启动 IK 或控制器。
-- `visualization.py` 与可视化/对比脚本：投影两套 `pick_object` 的机身 TCP，
-  标注矫正后的左右目图片并输出差值；固定图片复验全程不发送运动。
-- `tests/traditional_grasp/`：几何、配置、安全、接口闭环和真实原生 IK 测试。
+- `src/rpent_traditional_grasp/`：`api.py` 四接口编排与安全门禁；
+  `config.py`/`gripper.py` 配置与 Dex1-1 规格校验；`stereo.py` 标定/矫正/
+  CREStereo 适配；`perception.py` YOLO-World 检测与 SAM2 框提示分割；
+  `geometry.py` 商标带鲁棒深度与瓶心估计；`planning.py` ±30° 组合侧抓与
+  插值；`ik.py` 持久 TRAC-IK 与 FK 残差；`diagnostics.py` 无运动可达性诊断；
+  `execution.py` 碰撞/执行器协议与接触证据；`thor.py` Thor 相机与注入式
+  CapX 适配；`xyz.py` 图片到 TCP 验收；`visualization.py` 双后端 TCP 对比。
+- `native/` 官方 TRAC-IK 与 G1 文本链求解器；`robot/` 已核对 URDF 与运动链；
+  `scripts/` 运动链导出、原生构建、影子入口；`tests/traditional_grasp/` 覆盖
+  几何、配置、安全、接口闭环与真实原生 IK。
 
 ## 技术栈与外部依赖
 
