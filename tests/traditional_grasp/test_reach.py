@@ -29,7 +29,7 @@ def test_cached_scene_bottle_is_proven_out_of_reach() -> None:
     assessments = assess_arm_reach(
         CACHED_SCENE_BOTTLE_M,
         _geometries(),
-        planning_radius_m=0.50,
+        planning_radius_m=0.54,
     )
 
     for arm, assessment in assessments.items():
@@ -42,11 +42,11 @@ def test_cached_scene_bottle_is_proven_out_of_reach() -> None:
 
 def test_required_base_advance_puts_the_target_on_the_planning_radius() -> None:
     geometry = _geometries()["right"]
-    radius = 0.50
+    radius = 0.54
 
     advance = required_base_advance_m(CACHED_SCENE_BOTTLE_M, geometry, radius)
 
-    assert advance == pytest.approx(0.208912, abs=1e-5)
+    assert advance == pytest.approx(0.158894, abs=1e-5)
     moved = CACHED_SCENE_BOTTLE_M - np.array([advance, 0.0, 0.0])
     distance = float(np.linalg.norm(moved - geometry.shoulder_body_xyz_m))
     assert distance == pytest.approx(radius, abs=1e-9)
@@ -56,7 +56,7 @@ def test_target_already_inside_the_radius_needs_no_advance() -> None:
     geometry = _geometries()["right"]
     inside = geometry.shoulder_body_xyz_m + np.array([0.30, 0.0, 0.0])
 
-    assert required_base_advance_m(inside, geometry, 0.50) == 0.0
+    assert required_base_advance_m(inside, geometry, 0.54) == 0.0
 
 
 def test_laterally_unreachable_target_cannot_be_fixed_by_driving_forward() -> None:
@@ -65,14 +65,14 @@ def test_laterally_unreachable_target_cannot_be_fixed_by_driving_forward() -> No
     # along body +x can ever shrink that component.
     far_side = geometry.shoulder_body_xyz_m + np.array([0.40, 0.90, 0.0])
 
-    assert required_base_advance_m(far_side, geometry, 0.50) is None
+    assert required_base_advance_m(far_side, geometry, 0.54) is None
 
 
 def test_assess_arm_reach_rejects_invalid_input() -> None:
     geometries = _geometries()
 
     with pytest.raises(ValueError, match="三个有限数值"):
-        assess_arm_reach(np.array([0.5, 0.0]), geometries, planning_radius_m=0.5)
+        assess_arm_reach(np.array([0.5, 0.0]), geometries, planning_radius_m=0.54)
     with pytest.raises(ValueError, match="必须为正"):
         assess_arm_reach(
             CACHED_SCENE_BOTTLE_M, geometries, planning_radius_m=0.0
@@ -132,8 +132,8 @@ def test_plan_rejects_an_out_of_reach_target_before_solving_ik(
 
     assert plan["success"] is False
     assert plan["status"] == "unreachable"
-    assert "advance the base by 0.209 m" in plan["error"]
-    assert plan["reach"]["required_base_advance_m"] == pytest.approx(0.208912, abs=1e-5)
+    assert "advance the base by 0.159 m" in plan["error"]
+    assert plan["reach"]["required_base_advance_m"] == pytest.approx(0.158894, abs=1e-5)
     assert plan["reach"]["any_arm_within_serial_length_upper_bound"] is False
     # The verdict is geometric, so no IK solve is spent on a hopeless target.
     assert solved == []
@@ -149,7 +149,7 @@ def test_approach_reports_the_advance_that_the_body_origin_gate_hides() -> None:
 
     assert approach["approached"] is False
     assert approach["reason"] == "base_motion_not_authorized"
-    assert approach["required_base_advance_m"] == pytest.approx(0.208912, abs=1e-5)
+    assert approach["required_base_advance_m"] == pytest.approx(0.158894, abs=1e-5)
 
 
 def test_reach_precheck_is_skipped_without_chain_geometry() -> None:

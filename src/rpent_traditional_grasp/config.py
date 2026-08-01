@@ -77,12 +77,16 @@ class PlannerConfig:
     fk_rotation_tolerance_rad: float = 0.08
     tip_offset_m: float = 0.150215608966
     max_reach_m: float = 0.78
-    # Measured shoulder-to-target radius inside which the bounded side-grasp
-    # planner still returns candidates. The rigorous serial-length bound is
-    # 0.5606 m, but with a zero-joint seed and the target ~0.30 m below the
-    # shoulder the planner already fails at 0.5197 m and first succeeds at
-    # 0.5118 m, so 0.50 m keeps a small margin. Advice only; never a rejection.
-    side_grasp_planning_radius_m: float = 0.50
+    # Shoulder-to-target radius the base-advance advice aims for. The rigorous
+    # serial-length bound is 0.5606 m, but where the planner actually solves is
+    # strongly configuration dependent: 0.5118 m with a zero-joint seed on the
+    # cached desktop scene, 0.5392 m with the simulator ready pose on the
+    # replicated field scene. Closer is not better -- MuJoCo physics on the
+    # field scene grasps at 0.5392 m (two finger contacts, 91.6 mm lift) yet
+    # knocks the bottle over from 0.5309 m inward, so the usable window is only
+    # about +-8 mm wide. 0.54 m targets that single physically validated sample.
+    # Advice only; rejection uses the rigorous bound alone.
+    side_grasp_planning_radius_m: float = 0.54
     preferred_arm: str = "auto"
     side_grasp_pitch_degrees: tuple[float, ...] = (
         10.0,
