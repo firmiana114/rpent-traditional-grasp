@@ -1,0 +1,20 @@
+{
+  "source": "URDF g1_body29_hand14 d435_joint design pose + rectification-rotation compensation for thor_stereo_20260801",
+  "status": "design_nominal_unvalidated",
+  "from_frame": "left_camera_optical_rectified",
+  "to_frame": "body",
+  "derivation": {
+    "urdf_d435_pitch_rad": 0.8307767239493009,
+    "urdf_d435_center_xyz_m": [0.0576235, 0.01753, 0.42987],
+    "left_camera_translation": "module center minus half baseline along rectified x-axis expressed in body frame",
+    "rectification_R1": "cv2.stereoRectify(thor_stereo_20260801, CALIB_ZERO_DISPARITY, alpha=0) left rotation",
+    "replaces": "thor_camera_to_body_legacy.json which applied the raw-optical design rotation directly to rectified-frame points, ignoring the 8.45 deg rectification rotation, with a hand-written translation",
+    "validation_required": "hand-eye calibration or measured multi-position ground truth before setting camera_to_body_validated=true"
+  },
+  "transform": [
+    [0.12410659964698335, -0.7434522206961622, 0.6571729966044012, 0.053893442005148964],
+    [-0.9892016479140638, -0.04066458259253749, 0.1408065747281538, 0.04726072766329201],
+    [-0.077959295072261, -0.6675516364031473, -0.7404709049296377, 0.43221308806046077],
+    [0.0, 0.0, 0.0, 1.0]
+  ]
+}

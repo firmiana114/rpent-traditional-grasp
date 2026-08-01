@@ -43,18 +43,25 @@ class _SequenceSubscriber:
         return self.frames[index]
 
 
-def test_checked_in_thor_legacy_calibration_is_parseable() -> None:
+@pytest.mark.parametrize(
+    "name", ["thor_stereo_legacy.json", "thor_stereo_20260801.json"]
+)
+def test_checked_in_thor_calibration_is_parseable(name: str) -> None:
     root = Path(__file__).parents[2]
-    calibration = StereoCalibration.from_json(root / "config/thor_stereo_legacy.json")
+    calibration = StereoCalibration.from_json(root / "config" / name)
 
     assert calibration.image_size == (640, 480)
     assert calibration.translation_m.shape == (3, 1)
     assert 0.05 < calibration.baseline_m < 0.08
 
 
-def test_checked_in_thor_legacy_transform_is_rigid() -> None:
+@pytest.mark.parametrize(
+    "name",
+    ["thor_camera_to_body_legacy.json", "thor_camera_to_body_20260801.json"],
+)
+def test_checked_in_thor_transform_is_rigid(name: str) -> None:
     root = Path(__file__).parents[2]
-    transform = load_transform(root / "config/thor_camera_to_body_legacy.json")
+    transform = load_transform(root / "config" / name)
 
     assert transform.shape == (4, 4)
     np.testing.assert_allclose(np.linalg.det(transform[:3, :3]), 1.0, atol=1e-6)
