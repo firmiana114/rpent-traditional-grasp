@@ -17,6 +17,11 @@ from rpent_traditional_grasp.logging import get_logger
 logger = get_logger("service")
 
 
+def _bounded_repr(value: object, limit: int = 256) -> str:
+    rendered = repr(value)
+    return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
+
+
 class PlanningAPI(Protocol):
     """Subset of the grasp API required by the service transport."""
 
@@ -84,11 +89,23 @@ class TraditionalGraspPlanningService:
         if not object_prompt:
             raise ValueError("object_prompt 不能为空")
         arm_side = str(payload.get("arm_side", "auto"))
+        bbox = payload.get("bbox")
+        bbox_format = str(payload.get("bbox_format", "auto"))
+        logger.info(
+            "收到抓取规划请求: target=%s arm=%s bbox=%s bbox_format=%s "
+            "state_timestamp_s=%.6f current_q_shape=%s",
+            object_prompt,
+            arm_side,
+            _bounded_repr(bbox),
+            bbox_format,
+            state_timestamp_s,
+            current_q.shape,
+        )
         result = self.api.plan_pick_object(
             object_prompt=object_prompt,
             arm_side=arm_side,
-            bbox=payload.get("bbox"),
-            bbox_format=str(payload.get("bbox_format", "auto")),
+            bbox=bbox,
+            bbox_format=bbox_format,
         )
         result = dict(result)
         result.update(

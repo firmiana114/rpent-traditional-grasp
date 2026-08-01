@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from rpent_traditional_grasp.api import TraditionalGraspAPI
 from rpent_traditional_grasp.config import TraditionalGraspConfig
 from rpent_traditional_grasp.execution import ArmExecutor, MockArmExecutor
 from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
+from rpent_traditional_grasp.image_trace import pixel_sha256, save_stereo_pngs
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import IKPath
 from rpent_traditional_grasp.perception import Sam2BoxSegmenter, YoloWorldDetector
@@ -87,17 +89,18 @@ class ThorStereoCamera:
         host: str = "192.168.123.164",
         port: int = 55555,
         teleimager_source: str | Path = (
-            "/home/aiot/fuchengjia/Projects/xr_teleoperate/"
-            "teleop/teleimager/src"
+            "/home/aiot/fuchengjia/Projects/xr_teleoperate/" "teleop/teleimager/src"
         ),
         capture_timeout_s: float = 2.0,
         poll_interval_s: float = 0.01,
+        artifact_dir: str | Path | None = None,
     ) -> None:
         self.host = host
         self.port = int(port)
         self.teleimager_source = Path(teleimager_source)
         self.capture_timeout_s = float(capture_timeout_s)
         self.poll_interval_s = float(poll_interval_s)
+        self.artifact_dir = Path(artifact_dir) if artifact_dir else None
         if self.capture_timeout_s <= 0.0:
             raise ValueError("capture_timeout_s 必须大于零")
         if self.poll_interval_s <= 0.0:
@@ -126,9 +129,7 @@ class ThorStereoCamera:
         image = None
         while image is None:
             attempts += 1
-            frame = self._subscriber.subscribe(
-                self.host, self.port, request_bgr=True
-            )
+            frame = self._subscriber.subscribe(self.host, self.port, request_bgr=True)
             image = getattr(frame, "bgr", None) if frame is not None else None
             if image is not None:
                 break
@@ -142,21 +143,57 @@ class ThorStereoCamera:
                     self.capture_timeout_s,
                     attempts,
                 )
-                raise RuntimeError(
-                    f"Thor 双目流未返回图像: {self.host}:{self.port}"
-                )
+                raise RuntimeError(f"Thor 双目流未返回图像: {self.host}:{self.port}")
             time.sleep(min(self.poll_interval_s, remaining_s))
         image = np.asarray(image)
         if image.ndim != 3 or image.shape[1] < 8 or image.shape[1] % 2:
             raise ValueError(f"Thor 双目拼接图尺寸无效: {image.shape}")
         midpoint = image.shape[1] // 2
+        timestamp_s = time.time()
+        left = image[:, :midpoint]
+        right = image[:, midpoint:]
+        left_sha256 = pixel_sha256(left)
+        right_sha256 = pixel_sha256(right)
         logger.info(
-            "Thor 双目帧已采集: size=%dx%d attempts=%d",
+            "Thor 双目帧已采集: size=%dx%d attempts=%d timestamp_s=%.6f "
+            "left_sha256=%s right_sha256=%s",
             midpoint,
             image.shape[0],
             attempts,
+            timestamp_s,
+            left_sha256,
+            right_sha256,
         )
-        return image[:, :midpoint], image[:, midpoint:], time.time()
+        if self.artifact_dir is not None:
+            try:
+                left_path, right_path = save_stereo_pngs(
+                    self.artifact_dir,
+                    stage="raw",
+                    timestamp_s=timestamp_s,
+                    left=left,
+                    right=right,
+                )
+            except Exception:
+                logger.exception(
+                    "保存 Thor 原始双目帧失败: artifact_dir=%s "
+                    "timestamp_s=%.6f left_sha256=%s right_sha256=%s",
+                    self.artifact_dir,
+                    timestamp_s,
+                    left_sha256,
+                    right_sha256,
+                )
+            else:
+                logger.info(
+                    "Thor 原始双目帧已保存: timestamp_s=%.6f "
+                    "left_path=%s right_path=%s left_sha256=%s "
+                    "right_sha256=%s",
+                    timestamp_s,
+                    left_path,
+                    right_path,
+                    left_sha256,
+                    right_sha256,
+                )
+        return left, right, timestamp_s
 
 
 class InjectedCapXExecutor:
@@ -181,9 +218,7 @@ class InjectedCapXExecutor:
         }
         missing = sorted(name for name in required if not hasattr(controller, name))
         if missing:
-            raise ValueError(
-                "注入的 CapX 控制器缺少方法: " + ", ".join(missing)
-            )
+            raise ValueError("注入的 CapX 控制器缺少方法: " + ", ".join(missing))
         self.controller = controller
         self.min_point_duration_s = float(min_point_duration_s)
 
@@ -260,6 +295,7 @@ def build_thor_shadow_api(
         raise ValueError("shadow 构建器拒绝 live 或 allow_motion 配置")
 
     resources = config.resources
+    artifact_dir = os.getenv("RPENT_TRADITIONAL_GRASP_ARTIFACT_DIR")
     stereo_calibration_path = _resolve(resources.stereo_calibration, path.parent)
     transform_path = _resolve(resources.camera_to_body, path.parent)
     calibration = StereoCalibration.from_json(stereo_calibration_path)
@@ -277,7 +313,11 @@ def build_thor_shadow_api(
         )
         source_name = "image_pair"
     elif online_camera:
-        camera = ThorStereoCamera(host=host, port=port)
+        camera = ThorStereoCamera(
+            host=host,
+            port=port,
+            artifact_dir=artifact_dir,
+        )
         source_name = "online_camera"
     else:
         raise ValueError(
@@ -290,7 +330,14 @@ def build_thor_shadow_api(
         class_name="CREStereo",
         device="cuda",
     )
-    stereo_source = RectifiedStereoPipeline(camera, disparity, calibration)
+    stereo_source = RectifiedStereoPipeline(
+        camera,
+        disparity,
+        calibration,
+        artifact_dir=(
+            os.getenv("RPENT_TRADITIONAL_GRASP_ARTIFACT_DIR") if online_camera else None
+        ),
+    )
     detector = YoloWorldDetector(
         resources.yolo_model,
         resources.yolo_pt_model,
@@ -303,6 +350,7 @@ def build_thor_shadow_api(
         resources.sam2_checkpoint,
         resources.sam2_config,
         device="cuda",
+        artifact_dir=artifact_dir,
     )
     if perception_only:
         ik_solvers = {

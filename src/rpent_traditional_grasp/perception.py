@@ -12,6 +12,11 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from rpent_traditional_grasp.image_trace import (
+    mask_bbox_xyxy,
+    pixel_sha256,
+    save_segmentation_pngs,
+)
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import Detection
 
@@ -24,9 +29,7 @@ logger = get_logger("perception")
 class Detector(Protocol):
     """Open-vocabulary object detector."""
 
-    def detect(
-        self, image: np.ndarray, prompts: Sequence[str]
-    ) -> list[Detection]:
+    def detect(self, image: np.ndarray, prompts: Sequence[str]) -> list[Detection]:
         """Return matching detections."""
 
 
@@ -56,9 +59,7 @@ class YoloWorldDetector:
         self._model: Any = None
         self._dynamic_classes = False
 
-    def detect(
-        self, image: np.ndarray, prompts: Sequence[str]
-    ) -> list[Detection]:
+    def detect(self, image: np.ndarray, prompts: Sequence[str]) -> list[Detection]:
         model = self._load(prompts)
         if self._dynamic_classes:
             model.set_classes(list(prompts))
@@ -119,10 +120,7 @@ class YoloWorldDetector:
                 selected.suffix.lower() == ".engine"
                 and importlib.util.find_spec("tensorrt") is None
             ):
-                if (
-                    self.fallback_pt_path is None
-                    or not self.fallback_pt_path.is_file()
-                ):
+                if self.fallback_pt_path is None or not self.fallback_pt_path.is_file():
                     raise RuntimeError(
                         "TensorRT Python 绑定不可用且没有 YOLO-World PT 回退"
                     )
@@ -164,16 +162,19 @@ class Sam2BoxSegmenter:
         checkpoint: str | Path,
         model_config: str,
         device: str = "cuda",
+        artifact_dir: str | Path | None = None,
     ) -> None:
         self.repository = Path(repository)
         self.checkpoint = Path(checkpoint)
         self.model_config = model_config
         self.device = device
+        self.artifact_dir = Path(artifact_dir) if artifact_dir else None
         self._predictor: Any = None
 
     def segment(self, image: np.ndarray, detection: Detection) -> np.ndarray:
         predictor = self._load()
         started = time.perf_counter()
+        image_sha256 = pixel_sha256(image)
         try:
             predictor.set_image(image)
             masks, scores, _ = predictor.predict(
@@ -193,13 +194,48 @@ class Sam2BoxSegmenter:
             raise RuntimeError("SAM2 未返回掩码")
         best_index = int(np.argmax(np.asarray(scores)))
         mask = np.asarray(masks[best_index], dtype=bool)
+        artifact_paths: tuple[Path, Path, Path] | None = None
+        if self.artifact_dir is not None:
+            try:
+                artifact_paths = save_segmentation_pngs(
+                    self.artifact_dir,
+                    image=image,
+                    image_sha256=image_sha256,
+                    bbox_xyxy=detection.bbox_xyxy,
+                    mask=mask,
+                )
+            except Exception:
+                logger.exception(
+                    "保存 SAM2 诊断图片失败: artifact_dir=%s class=%s "
+                    "bbox=%s image_sha256=%s",
+                    self.artifact_dir,
+                    detection.class_name,
+                    detection.bbox_xyxy,
+                    image_sha256,
+                )
         logger.info(
-            "SAM2 分割完成: class=%s pixels=%d score=%.3f elapsed_ms=%.1f",
+            "SAM2 分割完成: class=%s bbox=%s image_shape=%s "
+            "image_dtype=%s image_sha256=%s scores=%s selected=%d "
+            "mask_bbox=%s pixels=%d score=%.3f elapsed_ms=%.1f",
             detection.class_name,
+            detection.bbox_xyxy,
+            image.shape,
+            image.dtype,
+            image_sha256,
+            [round(float(score), 6) for score in scores],
+            best_index,
+            mask_bbox_xyxy(mask),
             int(np.count_nonzero(mask)),
             float(scores[best_index]),
             (time.perf_counter() - started) * 1000.0,
         )
+        if artifact_paths is not None:
+            logger.info(
+                "SAM2 诊断图片已保存: image_sha256=%s bbox_path=%s "
+                "mask_path=%s overlay_path=%s",
+                image_sha256,
+                *artifact_paths,
+            )
         return mask
 
     def _load(self) -> Any:
@@ -240,9 +276,7 @@ class StaticDetector:
     def __init__(self, detections: list[Detection]) -> None:
         self.detections = detections
 
-    def detect(
-        self, image: np.ndarray, prompts: Sequence[str]
-    ) -> list[Detection]:
+    def detect(self, image: np.ndarray, prompts: Sequence[str]) -> list[Detection]:
         del image, prompts
         return list(self.detections)
 

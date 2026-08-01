@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from rpent_traditional_grasp.image_trace import pixel_sha256, save_stereo_pngs
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import StereoObservation
 
@@ -114,9 +115,7 @@ class StereoCalibration:
             raise ValueError("右相机焦距无效")
         if not 0.01 <= self.baseline_m <= 0.5:
             raise ValueError(f"双目基线异常: {self.baseline_m:.4f}m")
-        if not np.allclose(
-            self.rotation.T @ self.rotation, np.eye(3), atol=1e-3
-        ):
+        if not np.allclose(self.rotation.T @ self.rotation, np.eye(3), atol=1e-3):
             raise ValueError("双目标定 rotation 不是有效旋转矩阵")
 
 
@@ -128,10 +127,12 @@ class RectifiedStereoPipeline:
         camera: StereoCamera,
         disparity_backend: DisparityBackend,
         calibration: StereoCalibration,
+        artifact_dir: str | Path | None = None,
     ) -> None:
         self.camera = camera
         self.disparity_backend = disparity_backend
         self.calibration = calibration
+        self.artifact_dir = Path(artifact_dir) if artifact_dir else None
         self._maps: tuple[np.ndarray, ...] | None = None
         self._projection_left: np.ndarray | None = None
 
@@ -141,6 +142,12 @@ class RectifiedStereoPipeline:
         try:
             left, right, timestamp_s = self.camera.capture_stereo()
             left_rectified, right_rectified, projection = self._rectify(left, right)
+            if self.artifact_dir is not None:
+                self._save_rectified_pair(
+                    left_rectified,
+                    right_rectified,
+                    timestamp_s,
+                )
             disparity = np.asarray(
                 self.disparity_backend.predict_disparity(
                     left_rectified, right_rectified
@@ -152,8 +159,7 @@ class RectifiedStereoPipeline:
             raise RuntimeError("双目深度计算失败") from exc
         if disparity.shape != left_rectified.shape[:2]:
             raise ValueError(
-                f"视差尺寸不匹配: {disparity.shape} != "
-                f"{left_rectified.shape[:2]}"
+                f"视差尺寸不匹配: {disparity.shape} != " f"{left_rectified.shape[:2]}"
             )
         fx = float(projection[0, 0])
         depth_m = np.full(disparity.shape, np.nan, dtype=np.float32)
@@ -171,6 +177,43 @@ class RectifiedStereoPipeline:
             depth_m=depth_m,
             projection_left=projection,
             timestamp_s=float(timestamp_s),
+        )
+
+    def _save_rectified_pair(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+        timestamp_s: float,
+    ) -> None:
+        assert self.artifact_dir is not None
+        left_sha256 = pixel_sha256(left)
+        right_sha256 = pixel_sha256(right)
+        try:
+            left_path, right_path = save_stereo_pngs(
+                self.artifact_dir,
+                stage="rectified",
+                timestamp_s=timestamp_s,
+                left=left,
+                right=right,
+            )
+        except Exception:
+            logger.exception(
+                "保存校正双目帧失败: artifact_dir=%s timestamp_s=%.6f "
+                "left_sha256=%s right_sha256=%s",
+                self.artifact_dir,
+                timestamp_s,
+                left_sha256,
+                right_sha256,
+            )
+            return
+        logger.info(
+            "校正双目帧已保存: timestamp_s=%.6f left_path=%s "
+            "right_path=%s left_sha256=%s right_sha256=%s",
+            timestamp_s,
+            left_path,
+            right_path,
+            left_sha256,
+            right_sha256,
         )
 
     def _rectify(
@@ -274,9 +317,7 @@ class ExternalCREStereoBackend:
             module = importlib.import_module(self.module_name)
             type_ = getattr(module, self.class_name)
             try:
-                self._model = type_(
-                    model_path=str(self.model_path), device=self.device
-                )
+                self._model = type_(model_path=str(self.model_path), device=self.device)
             except TypeError:
                 self._model = type_(str(self.model_path))
         except Exception as exc:

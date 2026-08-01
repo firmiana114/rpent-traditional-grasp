@@ -35,6 +35,11 @@ from rpent_traditional_grasp.planning import (
 logger = get_logger("api")
 
 
+def _bounded_repr(value: object, limit: int = 256) -> str:
+    rendered = repr(value)
+    return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
+
+
 class StereoSource(Protocol):
     """Processed stereo source used by the public API."""
 
@@ -135,10 +140,16 @@ class TraditionalGraspAPI:
     ) -> dict[str, object]:
         """Locate and geometrically estimate a target bottle."""
         target = object_prompt or target or "bottle"
-        prompts = tuple(
-            dict.fromkeys((target, *self.config.perception.target_prompts))
+        prompts = tuple(dict.fromkeys((target, *self.config.perception.target_prompts)))
+        logger.info(
+            "开始搜索目标: target=%s prompt_count=%d bbox_input=%s "
+            "bbox_format=%s bbox_source=%s",
+            target,
+            len(prompts),
+            _bounded_repr(bbox),
+            bbox_format,
+            "detector" if bbox is None else "explicit",
         )
-        logger.info("开始搜索目标: target=%s prompt_count=%d", target, len(prompts))
         try:
             observation = self.compute_depth_crestereo()
             if bbox is None:
@@ -169,10 +180,18 @@ class TraditionalGraspAPI:
                     "reason": "not_detected",
                 }
             detection = detections[0]
-            mask = self.segment_object(observation.left, detection)
-            estimate = self.mask_depth_to_pointcloud(
-                detection, mask, observation
+            logger.info(
+                "已选择目标候选: target=%s source=%s class=%s "
+                "confidence=%.6f bbox=%s capture_timestamp_s=%.6f",
+                target,
+                "detector" if bbox is None else "explicit",
+                detection.class_name,
+                detection.confidence,
+                detection.bbox_xyxy,
+                observation.timestamp_s,
             )
+            mask = self.segment_object(observation.left, detection)
+            estimate = self.mask_depth_to_pointcloud(detection, mask, observation)
             self.context = PipelineContext(
                 observation=observation,
                 detection=detection,
@@ -429,9 +448,7 @@ class TraditionalGraspAPI:
                 planned.append((path, seed))
             except Exception as exc:
                 errors[candidate] = str(exc)
-                logger.warning(
-                    "候选手臂规划失败: arm=%s reason=%s", candidate, exc
-                )
+                logger.warning("候选手臂规划失败: arm=%s reason=%s", candidate, exc)
         if not planned:
             return {
                 "success": False,
@@ -611,15 +628,11 @@ class TraditionalGraspAPI:
         """Original fine-grained name: acquire rectified metric stereo depth."""
         return self.stereo_source.capture()
 
-    def segment_object(
-        self, image: np.ndarray, detection: Detection
-    ) -> np.ndarray:
+    def segment_object(self, image: np.ndarray, detection: Detection) -> np.ndarray:
         """Original fine-grained name: segment a detection with SAM2."""
         mask = np.asarray(self.segmenter.segment(image, detection), dtype=bool)
         if mask.shape != image.shape[:2]:
-            raise ValueError(
-                f"分割掩码尺寸不匹配: {mask.shape} != {image.shape[:2]}"
-            )
+            raise ValueError(f"分割掩码尺寸不匹配: {mask.shape} != {image.shape[:2]}")
         return mask
 
     def mask_depth_to_pointcloud(

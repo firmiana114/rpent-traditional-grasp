@@ -7,7 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from rpent_traditional_grasp.stereo import StereoCalibration
+from rpent_traditional_grasp.stereo import (
+    RectifiedStereoPipeline,
+    StereoCalibration,
+)
 from rpent_traditional_grasp.thor import (
     ImagePairStereoCamera,
     ThorStereoCamera,
@@ -42,9 +45,7 @@ class _SequenceSubscriber:
 
 def test_checked_in_thor_legacy_calibration_is_parseable() -> None:
     root = Path(__file__).parents[2]
-    calibration = StereoCalibration.from_json(
-        root / "config/thor_stereo_legacy.json"
-    )
+    calibration = StereoCalibration.from_json(root / "config/thor_stereo_legacy.json")
 
     assert calibration.image_size == (640, 480)
     assert calibration.translation_m.shape == (3, 1)
@@ -56,9 +57,7 @@ def test_checked_in_thor_legacy_transform_is_rigid() -> None:
     transform = load_transform(root / "config/thor_camera_to_body_legacy.json")
 
     assert transform.shape == (4, 4)
-    np.testing.assert_allclose(
-        np.linalg.det(transform[:3, :3]), 1.0, atol=1e-6
-    )
+    np.testing.assert_allclose(np.linalg.det(transform[:3, :3]), 1.0, atol=1e-6)
 
 
 def test_thor_camera_waits_for_asynchronous_first_frame() -> None:
@@ -76,6 +75,61 @@ def test_thor_camera_waits_for_asynchronous_first_frame() -> None:
     assert subscriber.calls == 2
     assert left.shape == right.shape == (4, 8, 3)
     assert timestamp_s > 0.0
+
+
+def test_thor_camera_saves_the_exact_raw_stereo_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stereo = np.arange(4 * 16 * 3, dtype=np.uint8).reshape(4, 16, 3)
+    subscriber = _SequenceSubscriber([_Frame(stereo)])
+
+    def imwrite(path: str, image: np.ndarray) -> bool:
+        Path(path).write_bytes(np.ascontiguousarray(image).tobytes())
+        return True
+
+    monkeypatch.setitem(sys.modules, "cv2", SimpleNamespace(imwrite=imwrite))
+    camera = ThorStereoCamera(
+        host="camera.test",
+        artifact_dir=tmp_path,
+    )
+    camera._subscriber = subscriber
+
+    left, right, _ = camera.capture_stereo()
+
+    left_paths = list(tmp_path.glob("raw_left_*.png"))
+    right_paths = list(tmp_path.glob("raw_right_*.png"))
+    assert len(left_paths) == len(right_paths) == 1
+    assert left_paths[0].read_bytes() == np.ascontiguousarray(left).tobytes()
+    assert right_paths[0].read_bytes() == np.ascontiguousarray(right).tobytes()
+
+
+def test_rectified_pipeline_saves_the_exact_model_input_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    left = np.arange(4 * 8 * 3, dtype=np.uint8).reshape(4, 8, 3)
+    right = left + 1
+
+    def imwrite(path: str, image: np.ndarray) -> bool:
+        Path(path).write_bytes(np.ascontiguousarray(image).tobytes())
+        return True
+
+    monkeypatch.setitem(sys.modules, "cv2", SimpleNamespace(imwrite=imwrite))
+    pipeline = RectifiedStereoPipeline(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        artifact_dir=tmp_path,
+    )
+
+    pipeline._save_rectified_pair(left, right, 100.0)
+
+    left_paths = list(tmp_path.glob("rectified_left_*.png"))
+    right_paths = list(tmp_path.glob("rectified_right_*.png"))
+    assert len(left_paths) == len(right_paths) == 1
+    assert left_paths[0].read_bytes() == np.ascontiguousarray(left).tobytes()
+    assert right_paths[0].read_bytes() == np.ascontiguousarray(right).tobytes()
 
 
 def test_thor_camera_fails_after_bounded_timeout() -> None:

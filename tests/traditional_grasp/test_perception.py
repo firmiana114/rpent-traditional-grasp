@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from rpent_traditional_grasp.perception import YoloWorldDetector
+import numpy as np
+import pytest
+
+from rpent_traditional_grasp.image_trace import (
+    pixel_sha256,
+    save_segmentation_pngs,
+)
+from rpent_traditional_grasp.models import Detection
+from rpent_traditional_grasp.perception import (
+    Sam2BoxSegmenter,
+    YoloWorldDetector,
+)
 
 
 class _FakeYoloWorld:
@@ -39,3 +51,78 @@ def test_yolo_world_falls_back_to_pt_without_tensorrt_bindings(
     assert isinstance(model, _FakeYoloWorld)
     assert model.model_path == str(pt_path)
     assert detector._dynamic_classes is True
+
+
+class _FakeSamPredictor:
+    def __init__(self, masks: np.ndarray, scores: np.ndarray) -> None:
+        self.masks = masks
+        self.scores = scores
+        self.image: np.ndarray | None = None
+        self.box: np.ndarray | None = None
+
+    def set_image(self, image: np.ndarray) -> None:
+        self.image = image
+
+    def predict(self, **kwargs: object) -> tuple[np.ndarray, np.ndarray, None]:
+        self.box = np.asarray(kwargs["box"])
+        return self.masks, self.scores, None
+
+
+def test_sam2_log_correlates_frame_box_scores_and_mask(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    image = np.arange(6 * 8 * 3, dtype=np.uint8).reshape(6, 8, 3)
+    masks = np.zeros((3, 6, 8), dtype=bool)
+    masks[1, 2:5, 3:7] = True
+    predictor = _FakeSamPredictor(
+        masks,
+        np.asarray([0.1, 0.9, 0.2], dtype=np.float32),
+    )
+    segmenter = Sam2BoxSegmenter(
+        tmp_path,
+        tmp_path / "checkpoint.pt",
+        "config.yaml",
+        device="cpu",
+    )
+    segmenter._predictor = predictor
+    detection = Detection("water bottle", 1.0, (2, 1, 7, 5))
+
+    with caplog.at_level(logging.INFO, logger="rpent_traditional_grasp"):
+        mask = segmenter.segment(image, detection)
+
+    np.testing.assert_array_equal(mask, masks[1])
+    np.testing.assert_array_equal(predictor.image, image)
+    np.testing.assert_array_equal(
+        predictor.box,
+        np.asarray(detection.bbox_xyxy, dtype=np.float32),
+    )
+    rendered = "\n".join(caplog.messages)
+    assert f"image_sha256={pixel_sha256(image)}" in rendered
+    assert "bbox=(2, 1, 7, 5)" in rendered
+    assert "scores=[0.1, 0.9, 0.2]" in rendered
+    assert "mask_bbox=(3, 2, 7, 5)" in rendered
+
+
+def test_segmentation_artifacts_include_box_mask_and_overlay(
+    tmp_path: Path,
+) -> None:
+    cv2 = pytest.importorskip("cv2")
+    image = np.zeros((20, 30, 3), dtype=np.uint8)
+    mask = np.zeros((20, 30), dtype=bool)
+    mask[6:15, 10:19] = True
+
+    bbox_path, mask_path, overlay_path = save_segmentation_pngs(
+        tmp_path,
+        image=image,
+        image_sha256=pixel_sha256(image),
+        bbox_xyxy=(8, 4, 21, 17),
+        mask=mask,
+    )
+
+    assert bbox_path.is_file()
+    assert mask_path.is_file()
+    assert overlay_path.is_file()
+    saved_mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    assert saved_mask is not None
+    np.testing.assert_array_equal(saved_mask > 0, mask)

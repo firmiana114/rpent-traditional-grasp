@@ -55,6 +55,7 @@
 - 原生入口：`native/build/g1_trac_ik`，每条手臂保持一个求解进程。
 - Thor 入口：`scripts/run_thor_shadow.py`，默认只运行 `search` 影子流程。
 - 日志默认 INFO；关键配置、感知、IK、门禁和执行均留上下文及原始异常链。
+- 在线抓取把原始/校正双目、SAM2 框选图、掩码和叠加图保存到父项目单次运行目录，并用帧 SHA-256、输入框、候选分数及掩码框串联 INFO 日志。
 - 三维点先位于左相机坐标系，再通过配置外参变换到 `torso_link` 机身坐标系。
 
 ## 常用命令
@@ -80,8 +81,7 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 当前状态与已验证事实
 
-- macOS arm64 原生 TRAC-IK 已由 `build_native_macos.sh` 构建，左右 CTest 与
-  40 项 pytest 全通过；兄弟仿真默认使用原生求解并跑通左右臂 Oracle 物理链。
+- macOS arm64 原生 TRAC-IK 已由 `build_native_macos.sh` 构建，左右 CTest 与 40 项 pytest 全通过；兄弟仿真默认使用原生求解并跑通左右臂 Oracle 物理链。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
