@@ -54,7 +54,7 @@
 - 配置入口：`thor.example.json`；双目标定和相机外参分别位于 `config/`。
 - 原生入口：`native/build/g1_trac_ik`，每条手臂保持一个求解进程。
 - Thor 入口：`scripts/run_thor_shadow.py`，默认只运行 `search` 影子流程。
-- 日志默认 INFO；关键配置、感知、IK、门禁和执行均留上下文及原始异常链。
+- 日志默认 INFO；关键配置、感知、IK、门禁和执行均保留上下文及异常链；服务在文件描述符层隔离 JSON 回复与第三方输出，父项目另有限量抗噪读取。
 - 在线抓取把原始/校正双目、SAM2 框选图、掩码和叠加图保存到父项目单次运行目录，并用帧 SHA-256、输入框、候选分数及掩码框串联 INFO 日志。
 - 三维点先位于左相机坐标系，再通过配置外参变换到 `torso_link` 机身坐标系。
 
@@ -88,8 +88,7 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 - G1 URDF SHA-256 为
   `8bbf006633fc50b616f665c7a970780cc296577a0adfd7d28b049e751c238735`，
   与 Thor 上 `xr_teleoperate` 模型逐字节一致。
-- Thor 已核实 YOLO-World、SAM2、CREStereo、URDF 外部资源存在；
-  `abot-claw` 环境可导入相关推理依赖。
+- Thor 已核实 YOLO-World、SAM2、CREStereo、URDF 外部资源存在；`abot-claw` 环境可导入相关推理依赖；协议隔离回归确认 Python 与原生 fd 1 输出均不会进入 JSON 通道。
 - Thor 是 Ubuntu 24.04/aarch64，账号无免密 sudo；无 sudo 依赖构建脚本已提供。
 - 当前 CapX `ArmController` 构造器会自动回零，因此本项目只接受上层持有者注入
   的控制器，禁止自行实例化。

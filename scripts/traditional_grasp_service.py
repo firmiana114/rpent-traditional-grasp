@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import TextIO
 
 from rpent_traditional_grasp.execution import PlanningArmExecutor
 from rpent_traditional_grasp.logging import configure_logging, get_logger
@@ -30,8 +32,23 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _isolate_protocol_stdout() -> TextIO:
+    """Reserve the original stdout for JSON and redirect fd 1 noise to stderr."""
+    sys.stdout.flush()
+    protocol_fd = os.dup(sys.stdout.fileno())
+    protocol_stdout = os.fdopen(
+        protocol_fd,
+        "w",
+        buffering=1,
+        encoding="utf-8",
+    )
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    return protocol_stdout
+
+
 def main() -> int:
     args = _parser().parse_args()
+    protocol_stdout = _isolate_protocol_stdout()
     configure_logging()
     root = Path(__file__).resolve().parents[1]
     config_path = Path(args.config).resolve()
@@ -52,7 +69,8 @@ def main() -> int:
         plan_ttl_s=args.plan_ttl_s,
     )
     logger.info(
-        "传统抓取规划服务已启动: config=%s host=%s port=%d motion=False",
+        "传统抓取规划服务已启动: config=%s host=%s port=%d motion=False "
+        "stdout_protocol_isolated=True",
         config_path,
         args.host,
         args.port,
@@ -71,10 +89,16 @@ def main() -> int:
                 "success": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        print(json.dumps(response, ensure_ascii=False), flush=True)
+        print(
+            json.dumps(response, ensure_ascii=False),
+            file=protocol_stdout,
+            flush=True,
+        )
         if should_close:
+            protocol_stdout.close()
             return 0
     service.close()
+    protocol_stdout.close()
     return 0
 
 
