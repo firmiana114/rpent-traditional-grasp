@@ -275,6 +275,7 @@ class RectifiedStereoPipeline:
         )
 
 
+_CUDA_PROVIDER = "CUDAExecutionProvider"
 # onnxruntime providers that actually run inference on local accelerators.
 # AzureExecutionProvider is a remote-inference entry point, not an accelerator,
 # and CPU-only builds still advertise it, so it must stay out of this set.
@@ -310,6 +311,7 @@ class ExternalCREStereoBackend:
         self.class_name = class_name
         self.device = device
         self._model: Any = None
+        self.execution_providers: list[str] = []
 
     def predict_disparity(
         self, left_rectified: np.ndarray, right_rectified: np.ndarray
@@ -352,21 +354,33 @@ class ExternalCREStereoBackend:
             self.class_name,
             self.device,
         )
-        self._log_execution_providers()
+        self.execution_providers = self._ensure_execution_providers()
         return self._model
 
-    def _log_execution_providers(self) -> None:
-        """Record the runtime's effective providers so CPU fallback is visible."""
+    def _ensure_execution_providers(self) -> list[str]:
+        """Pin the session to an accelerator when one exists, else state the fallback.
+
+        The deployment-provided CREStereo classes hardcode their own provider
+        list, so a runtime without CUDA silently degrades to the CPU provider
+        and costs roughly two orders of magnitude in latency. Whether CREStereo
+        can use CUDA is decided by onnxruntime rather than by the Torch device
+        string, so any device except an explicit ``cpu`` override queries the
+        runtime and re-selects ``CUDAExecutionProvider`` on a session that landed
+        on the CPU. It deliberately never forces TensorRT: that provider builds
+        an engine on first use and the vendor class owns the engine cache path,
+        so an already-active TensorRT session is left untouched.
+        """
         session = getattr(self._model, "session", None)
         providers = getattr(session, "get_providers", None)
         if providers is None:
             logger.info(
                 "CREStereo 后端未暴露 onnxruntime 会话，跳过执行提供者检查: "
-                "module=%s class=%s",
+                "module=%s class=%s device=%s",
                 self.module_name,
                 self.class_name,
+                self.device,
             )
-            return
+            return []
         try:
             active = list(providers())
         except Exception:
@@ -375,24 +389,53 @@ class ExternalCREStereoBackend:
                 self.module_name,
                 self.class_name,
             )
-            return
-        accelerated = [name for name in active if name in _ACCELERATED_PROVIDERS]
-        if accelerated:
+            return []
+        if any(name in _ACCELERATED_PROVIDERS for name in active):
             logger.info(
-                "CREStereo 执行提供者: active=%s accelerated=%s device=%s",
+                "CREStereo 使用加速执行提供者: active=%s device=%s",
                 ",".join(active),
-                ",".join(accelerated),
                 self.device,
             )
-            return
+            return active
+
+        available: list[str] = []
+        if self.device != "cpu":
+            try:
+                import onnxruntime
+
+                available = list(onnxruntime.get_available_providers())
+            except Exception:
+                logger.exception("读取 onnxruntime 可用执行提供者失败")
+            if _CUDA_PROVIDER in available:
+                forced = [_CUDA_PROVIDER, "CPUExecutionProvider"]
+                try:
+                    session.set_providers(forced)
+                    active = list(providers())
+                except Exception:
+                    logger.exception(
+                        "切换 CREStereo 到 CUDA 失败，将继续使用当前提供者: "
+                        "requested=%s model=%s",
+                        ",".join(forced),
+                        self.model_path,
+                    )
+                else:
+                    logger.info(
+                        "CREStereo 已强制切换到 CUDA: active=%s "
+                        "vendor_default=CPU module=%s",
+                        ",".join(active),
+                        self.module_name,
+                    )
+                    return active
+
         logger.warning(
             "CREStereo 回退到纯 CPU 推理，深度耗时会高出约两个数量级: "
-            "active=%s device=%s model=%s；请改用带 CUDA/TensorRT 提供者的 "
-            "onnxruntime 解释器",
+            "active=%s device=%s available=%s model=%s",
             ",".join(active) or "none",
             self.device,
+            ",".join(available) or "unqueried",
             self.model_path,
         )
+        return active
 
 
 class StaticStereoSource:

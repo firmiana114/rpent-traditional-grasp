@@ -16,8 +16,7 @@
   选择、控制器所有权、计划复验和执行；`pick_object` 已锁定原仅关键字参数及主要结果
   字段。
 - 细粒度接口：`compute_depth_crestereo`、`segment_object`、`mask_depth_to_pointcloud`、`pointcloud_to_body`、规划和执行。
-- `offline` 完整模拟闭环；`shadow` 用真实感知/IK但绝不发运动命令；`live` 必须同时通过运动授权、三项标定和碰撞检查门禁。
-- 抓取顺序固定为张手、预抓取、抓取位、闭合/接触、抬升、后撤；不自动回零。
+- `offline` 完整模拟闭环；`shadow` 用真实感知/IK但绝不发运动命令；`live` 必须同时通过运动授权、三项标定和碰撞检查门禁。抓取顺序固定为张手、预抓取、抓取位、闭合/接触、抬升、后撤，构造器与接口都不自动回零。
 
 ## 主要模块与目录
 
@@ -34,10 +33,8 @@
 
 ## 技术栈与外部依赖
 
-- Python 3.10–3.12、NumPy、OpenCV、Ultralytics、SAM2、ONNX Runtime。
-- C++17、CMake/Ninja、Eigen3、Orocos KDL、NLopt。
-- `traclabs/trac_ik@90162ac2...`，BSD-3-Clause，源码在 `native/vendor/`。
-- reBot 仅参考流程概念，未复制其源码和 GraspNet；详见 `UPSTREAM.md`。
+- Python 3.10–3.12、NumPy、OpenCV、Ultralytics、SAM2、ONNX Runtime；C++17、CMake/Ninja、Eigen3、Orocos KDL、NLopt。
+- `traclabs/trac_ik@90162ac2...`（BSD-3-Clause，源码在 `native/vendor/`）；reBot 仅参考流程概念，未复制其源码和 GraspNet，详见 `UPSTREAM.md`。
 - 模型权重与第三方推理代码均为外部资源，不进入本仓库；本机放在
   `/Users/firmiana/project/rpent-models/`（权重分三个子目录，`vendor/` 存两个
   公开仓库）。
@@ -48,8 +45,7 @@
   `config/` 下同一批标定文件。感知设备由 `thor.py` 按 cuda→mps→cpu 自动选择，
   可用 `RPENT_TRADITIONAL_GRASP_DEVICE` 强制覆盖。
 - 原生入口 `native/build/g1_trac_ik`（每臂一个求解进程）；影子入口 `scripts/run_thor_shadow.py`，默认只运行 `search`。
-- 日志默认 INFO；关键配置、感知、IK、门禁和执行均保留上下文及异常链；服务在文件描述符层隔离 JSON 回复与第三方输出，父项目另有限量抗噪读取。
-- 在线抓取把原始/校正双目、SAM2 框选图、掩码和叠加图保存到父项目单次运行目录，并用帧 SHA-256、输入框、候选分数及掩码框串联 INFO 日志。
+- 日志默认 INFO；关键配置、感知、执行提供者、IK、可达性、门禁和执行均保留上下文及异常链；服务在文件描述符层隔离 JSON 回复与第三方输出，父项目另有限量抗噪读取。在线抓取把原始/校正双目、SAM2 框选图、掩码和叠加图保存到父项目单次运行目录，并用帧 SHA-256、输入框、候选分数及掩码框串联 INFO 日志。
 - 三维点先位于左相机坐标系，再通过配置外参变换到 `torso_link` 机身坐标系。
 
 ## 常用命令
@@ -90,19 +86,26 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   1→2→4→9。故 `side_grasp_planning_radius_m` 取 0.50 m（只用于建议前进量，不做拒绝）。
   按预测前进 0.208 m 后肩距 0.5000 m，右臂确实解出 3 个候选，预测得到验证。
 - 经典算法替换已否决：SGBM 24 ms、GrabCut 292 ms（比 SAM2 慢 1.8 倍）、YOLO-World 无经典替代；SGBM 在现场图直接失败（MAD `76.6 mm` 超 25 mm 门限）。
-- **CREStereo 跑 CPU 已修复**（2026-08-01）。根因是影子入口的 `yolo_world` conda
-  环境装了纯 CPU 版 onnxruntime（只有 Azure/CPU provider），`object_grab.py`
-  请求的 TensorRT/CUDA 被静默回退。同机唯一 GPU 版 onnxruntime 是本地源码编译的
-  `onnxruntime_gpu-1.24.0`（`/home/aiot/mingjuwang/Models/onnxruntime/build/` 下，有
-  cp310/cp312/cp313 三份），按 NumPy 1.x 编译，装进 NumPy 2.4.4 的 `yolo_world` 会
-  `ImportError: import numpy failed`（已试、已还原，备份在
-  `/home/aiot/backup_onnxruntime_cpu/`）。最终方案是 `--system-site-packages` 叠加虚拟
-  环境 `/home/aiot/wuxi/venvs/rpent-grasp-gpu`，继承 `yolo_world` 的 torch 2.13+cu130/
-  cv2/ultralytics/tensorrt/clip，只覆盖 numpy 1.26.4 与 GPU 版 onnxruntime。实测
-  CREStereo 稳态 `3544 ms → 49.2 ms`（72 倍），视差均值差 0.013 px，端到端瓶心差
-  0.1 mm；两个 Thor 图片入口的 `THOR_YOLO_PYTHON` 默认值已改指该虚拟环境。
-- 本机模型部署已完成，影子链路不再依赖服务器。三个权重全部来自公开发布源且体积
-  与 Thor 一致：CREStereo ONNX 25 MB（PINTO model zoo `284_CREStereo` 的
+- **CREStereo 跑 CPU 已修复**（2026-08-01）。根因是影子入口的 `yolo_world` conda 环境
+  装了纯 CPU 版 onnxruntime（只有 Azure/CPU provider），`object_grab.py` 请求的
+  TensorRT/CUDA 被静默回退。同机唯一 GPU 版是本地源码编译的 `onnxruntime_gpu-1.24.0`
+  （`/home/aiot/mingjuwang/Models/onnxruntime/build/` 下，有 cp310/cp312/cp313 三份），
+  按 NumPy 1.x 编译，装进 NumPy 2.4.4 的 `yolo_world` 会 `ImportError: import numpy
+  failed`（已试、已还原，备份在 `/home/aiot/backup_onnxruntime_cpu/`）。最终方案是
+  `--system-site-packages` 叠加虚拟环境 `/home/aiot/wuxi/venvs/rpent-grasp-gpu`，继承
+  `yolo_world` 的 torch 2.13+cu130/cv2/ultralytics/tensorrt/clip，只覆盖 numpy 1.26.4
+  与 GPU 版 onnxruntime。实测 CREStereo 稳态 `3544 ms → 49.2 ms`（72 倍），视差均值差
+  0.013 px，端到端瓶心差 0.1 mm；两个 Thor 图片入口的 `THOR_YOLO_PYTHON` 默认值已改指
+  该虚拟环境。
+- 执行提供者不再听凭第三方类摆布：`ExternalCREStereoBackend` 加载后自己判定。已在跑
+  加速器（Thor 的 TensorRT）就原样保留——重选会丢掉厂商类配的 fp16 与引擎缓存路径；
+  只落在 CPU 时，只要 onnxruntime 报告有 `CUDAExecutionProvider` 就 `set_providers`
+  强制切过去（**不**强推 TensorRT，那会触发首次引擎编译且本层没有缓存路径）；确实
+  没有才 WARNING 明确回退 CPU，并把运行时可用列表一并记下。是否能用 CUDA 由
+  onnxruntime 而非 Torch 决定，所以只有显式 `RPENT_TRADITIONAL_GRASP_DEVICE=cpu`
+  才跳过探测。
+- 本机模型部署已完成，影子链路不再依赖服务器。三个权重全部来自公开发布源且体积与
+  Thor 一致：CREStereo ONNX 25 MB（PINTO model zoo `284_CREStereo` 的
   `resources_iter5.tar.gz`）、YOLO-World `.pt` 140 MB（ultralytics/assets v8.3.0）、
   SAM2 176 MB（`dl.fbaipublicfiles.com`）。第三方推理代码同样取公开仓库：
   `ibaiGorordo/ONNX-CREStereo-Depth-Estimation`（`CREStereo` 类与 Thor 的
@@ -120,7 +123,7 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 未确认、阻塞问题与下一步
 
-- 相机-机身外参为设计名义值复合，旋转偏差上界约 `5.63°`（68 mm），平移方向无观测约束。必须做手眼标定或多位置人工真值验收，通过前 `camera_to_body_validated` 保持 false。
+- 相机-机身外参为设计名义值复合，旋转偏差上界约 `5.63°`（68 mm），平移方向无观测约束；通过手眼标定或多位置人工真值验收前，`camera_to_body_validated` 保持 false。
 - **本轮代码提交尚未同步到 air-thor**：改完 GPU 环境后服务器即以
   `kex_exchange_identification: Connection closed` 拒连（TCP 通、sshd 立即断），随后
   确认服务器可能已关机。Thor 端已生效的只是运行环境。恢复后用 `git bundle` 同步，
@@ -135,16 +138,13 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   仿真瓶模型含瓶颈、掩码中位高度本就高于圆柱中心，需先分清这 26 mm 里多少是模型差异、
   多少是估计器偏差。仿真交接报告里"x=0.48 右臂全物理抓取冒烟通过"本轮**未能复现**
   （世界系入口还被一处 1e-8 m 的放置容差挡住）。
-- 新双目标定尚未做在线相机采集回归；瓶体商标区域在反光、透明瓶、遮挡和低纹理场景的深度成功率也尚未实测。
-- 环境障碍物碰撞因缺场景模型未实现，实机前需清场和急停；Dex1-1 驱动量到毫米开口、接触阈值、TCP 六自由度外参也未做真机标定。
+- 新双目标定尚未做在线相机采集回归；商标区域在反光、透明瓶、遮挡和低纹理场景的深度成功率也尚未实测。环境障碍物碰撞因缺场景模型未实现，实机前需清场和急停；Dex1-1 驱动量到毫米开口、接触阈值、TCP 六自由度外参也未做真机标定。
 - `visualization.py` 与三个对比脚本为另一会话的未提交工作，未经本轮验证。
 - 下一步：查清仿真物理抓取失败根因 → 同步 Thor 与父项目 → 手眼标定验收 →
   清场急停后限速小步真机验证。
 
 ## 注意事项
 
-- 父、子项目必须分别提交和同步；子项目不作 submodule，其路径由父项目本地排除
-  规则隔离，不要在父项目提交中纳入 `traditional_grasp/` 内容。
+- 父、子项目必须分别提交和同步；子项目不作 submodule，其路径由父项目本地排除规则隔离，不要在父项目提交中纳入 `traditional_grasp/` 内容。
 - 不得把示例配置直接切为 `live`，不得绕过碰撞检查和标定验证布尔门禁；TRAC-IK 只负责运动学求解，不提供碰撞安全保证。
-- `macos.example.json` 与 `rpent-models/` 的绝对路径是本机部署事实，换机器须改；
-  两个 `run_macos_*.sh` 支持用环境变量覆盖解释器与 SAM2 仓库。
+- `macos.example.json` 与 `rpent-models/` 的绝对路径是本机部署事实，换机器须改；两个 `run_macos_*.sh` 支持用环境变量覆盖解释器与 SAM2 仓库。
