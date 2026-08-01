@@ -28,8 +28,10 @@ from rpent_traditional_grasp.models import (
 from rpent_traditional_grasp.perception import Detector, Segmenter
 from rpent_traditional_grasp.planning import (
     compute_gripper_tcp_target,
+    interpolate_joint_bridge,
     interpolate_waypoints,
     plan_fixed_side_grasp,
+    side_grasp_rotation_candidates,
 )
 
 logger = get_logger("api")
@@ -435,17 +437,33 @@ class TraditionalGraspAPI:
             }
         assert self.context.estimate is not None
         candidates = ["left", "right"] if arm_side == "auto" else [arm_side]
-        planned: list[tuple[IKPath, np.ndarray]] = []
+        planned: list[tuple[IKPath, np.ndarray, dict[str, object]]] = []
         errors: dict[str, str] = {}
         for candidate in candidates:
             try:
                 seed = self.executor.current_joints(candidate)
-                path = self.plan_contact_grasp(
+                arm_plans = self.plan_contact_grasp_candidates(
                     self.context.estimate,
                     candidate,
                     current_joints=seed,
                 )
-                planned.append((path, seed))
+                for path, metadata in arm_plans:
+                    if self.collision_checker is not None:
+                        safe, detail = self.collision_checker.check_path(path)
+                        metadata = {
+                            **metadata,
+                            "collision_checked": bool(safe),
+                            "collision_check_detail": detail,
+                        }
+                        if not safe:
+                            logger.info(
+                                "侧抓候选碰撞拒绝: arm=%s candidate=%s detail=%s",
+                                candidate,
+                                metadata.get("orientation_candidate"),
+                                detail,
+                            )
+                            continue
+                    planned.append((path, seed, metadata))
             except Exception as exc:
                 errors[candidate] = str(exc)
                 logger.warning("候选手臂规划失败: arm=%s reason=%s", candidate, exc)
@@ -465,26 +483,27 @@ class TraditionalGraspAPI:
                 "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
                 "arm_errors": errors,
             }
-        selected, seed = min(planned, key=lambda item: item[0].score)
+        planned.sort(key=lambda item: item[0].score)
+        planned = planned[: self.config.planner.max_ranked_candidates]
+        selected, seed, selected_metadata = planned[0]
         self.context.ik_path = selected
-        collision_checked = False
-        collision_detail = "collision checker not configured"
-        if self.collision_checker is not None:
-            collision_checked, collision_detail = self.collision_checker.check_path(
-                selected
-            )
-            if not collision_checked:
-                logger.warning(
-                    "规划路径碰撞检查未通过: arm=%s detail=%s",
-                    selected.arm,
-                    collision_detail,
-                )
+        collision_checked = bool(selected_metadata.get("collision_checked"))
+        collision_detail = selected_metadata.get(
+            "collision_check_detail",
+            "collision checker not configured",
+        )
+        serialized_candidates = [
+            _serialize_plan(path, path_seed, metadata)
+            for path, path_seed, metadata in planned
+        ]
         observation = self.context.observation
         logger.info(
-            "无运动抓取计划完成: target=%s arm=%s points=%d "
-            "collision_checked=%s motion=False",
+            "无运动侧抓计划完成: target=%s arm=%s candidate=%s "
+            "ranked_candidates=%d points=%d collision_checked=%s motion=False",
             object_prompt,
             selected.arm,
+            selected_metadata.get("orientation_candidate"),
+            len(serialized_candidates),
             len(selected.positions),
             collision_checked,
         )
@@ -511,15 +530,14 @@ class TraditionalGraspAPI:
             ),
             "collision_checked": collision_checked,
             "collision_check_detail": collision_detail,
-            "plan": {
-                "arm_side": selected.arm,
-                "joint_names": list(selected.joint_names),
-                "seed_q": np.asarray(seed, dtype=np.float64).tolist(),
-                "positions_rad": [position.tolist() for position in selected.positions],
-                "waypoint_names": list(selected.waypoint_names),
-                "max_joint_step_rad": selected.max_joint_step_rad,
-                "score": selected.score,
-            },
+            "orientation_candidate": selected_metadata.get(
+                "orientation_candidate"
+            ),
+            "orientation_delta_deg": selected_metadata.get(
+                "orientation_delta_deg"
+            ),
+            "plan": serialized_candidates[0],
+            "candidate_plans": serialized_candidates,
         }
 
     def preview_pick_object_xyz(
@@ -572,7 +590,7 @@ class TraditionalGraspAPI:
             "requested_arm_side": arm_side,
             "selected_arm_side": gripper.arm,
             "final_tcp_body_xyz_m": final_xyz,
-            "orientation_policy": "preserve_initial",
+            "orientation_policy": "bounded_side_grasp_candidates",
             "status": "xyz_ready",
             "reason": "staged_internal_preview",
         }
@@ -667,31 +685,130 @@ class TraditionalGraspAPI:
         arm: str,
         current_joints: np.ndarray | None = None,
     ) -> IKPath:
-        """Original fine-grained name: fixed pose plus continuous TRAC-IK."""
+        """Return the lowest-cost bounded side-grasp candidate."""
+        return self.plan_contact_grasp_candidates(
+            estimate,
+            arm,
+            current_joints=current_joints,
+        )[0][0]
+
+    def plan_contact_grasp_candidates(
+        self,
+        estimate: BottleEstimate,
+        arm: str,
+        current_joints: np.ndarray | None = None,
+    ) -> list[tuple[IKPath, dict[str, object]]]:
+        """Plan bounded side-grasp orientations without commanding motion."""
         solver = self.ik_solvers[arm]
         if current_joints is None:
             current_joints = self.executor.current_joints(arm)
         current_joints = np.asarray(current_joints, dtype=np.float64)
         start_pose = solver.forward(current_joints)
-        sparse = plan_fixed_side_grasp(
-            estimate,
-            arm,
+        successes: list[tuple[IKPath, dict[str, object]]] = []
+        failures: dict[str, str] = {}
+        for orientation in side_grasp_rotation_candidates(
+            start_pose.rotation,
             self.config.planner,
-            tcp_rotation=start_pose.rotation,
-        )
-        dense = interpolate_waypoints(
-            start_pose,
-            sparse,
-            self.config.planner.cartesian_step_m,
-            self.config.planner.rotation_step_rad,
-        )
-        return solve_continuous_path(
-            arm,
-            solver,
-            current_joints,
-            dense,
-            self.config.planner,
-        )
+        ):
+            try:
+                sparse = plan_fixed_side_grasp(
+                    estimate,
+                    arm,
+                    self.config.planner,
+                    tcp_rotation=orientation.rotation,
+                )
+                # Reject an orientation before building a path if the final grasp
+                # pose itself is infeasible.
+                solver.solve(current_joints, sparse[1].pose)
+                pregrasp_q = solver.solve(current_joints, sparse[0].pose)
+                bridge = interpolate_joint_bridge(
+                    current_joints,
+                    pregrasp_q,
+                    self.config.planner.joint_bridge_step_rad,
+                )
+                minimum_allowed_z = min(
+                    float(start_pose.position_m[2]),
+                    float(sparse[0].pose.position_m[2]),
+                ) - self.config.planner.joint_bridge_max_tcp_drop_m
+                bridge_tcp_z = [
+                    float(solver.forward(position).position_m[2])
+                    for position in bridge
+                ]
+                minimum_bridge_z = min(bridge_tcp_z)
+                if minimum_bridge_z < minimum_allowed_z:
+                    raise RuntimeError(
+                        "关节空间预抓取路径 TCP 下探超限: "
+                        f"minimum_z={minimum_bridge_z:.4f}m "
+                        f"allowed={minimum_allowed_z:.4f}m"
+                    )
+                pregrasp_pose = solver.forward(pregrasp_q)
+                dense_approach = interpolate_waypoints(
+                    pregrasp_pose,
+                    sparse[1:],
+                    self.config.planner.cartesian_step_m,
+                    self.config.planner.rotation_step_rad,
+                )
+                approach_path = solve_continuous_path(
+                    arm,
+                    solver,
+                    pregrasp_q,
+                    dense_approach,
+                    self.config.planner,
+                )
+                path = _combine_side_grasp_path(
+                    arm=arm,
+                    joint_names=approach_path.joint_names,
+                    seed=current_joints,
+                    bridge=bridge,
+                    approach=approach_path,
+                    orientation_penalty=(
+                        self.config.planner.side_grasp_orientation_penalty
+                        * orientation.angular_offset_rad**2
+                    ),
+                )
+                metadata: dict[str, object] = {
+                    "orientation_policy": "bounded_side_grasp_candidates",
+                    "orientation_candidate": orientation.name,
+                    "orientation_delta_deg": float(
+                        np.degrees(orientation.angular_offset_rad)
+                    ),
+                    "tcp_rotation": orientation.rotation.tolist(),
+                    "approach_policy": (
+                        "joint_space_to_pregrasp_then_cartesian_side_insertion"
+                    ),
+                    "joint_bridge_points": len(bridge),
+                    "minimum_joint_bridge_tcp_z_m": minimum_bridge_z,
+                    "collision_checked": False,
+                    "collision_check_detail": "collision checker not configured",
+                }
+                successes.append((path, metadata))
+                logger.info(
+                    "侧抓姿态候选可行: arm=%s candidate=%s delta_deg=%.1f "
+                    "bridge_points=%d cartesian_points=%d score=%.6f",
+                    arm,
+                    orientation.name,
+                    metadata["orientation_delta_deg"],
+                    len(bridge),
+                    len(approach_path.positions),
+                    path.score,
+                )
+            except Exception as exc:
+                failures[orientation.name] = str(exc)
+                logger.info(
+                    "侧抓姿态候选拒绝: arm=%s candidate=%s reason=%s",
+                    arm,
+                    orientation.name,
+                    exc,
+                )
+        self.context.diagnostics.setdefault("side_grasp_candidates", {})[arm] = {
+            "accepted": [metadata["orientation_candidate"] for _, metadata in successes],
+            "rejected": failures,
+        }
+        if not successes:
+            raise RuntimeError(
+                f"{arm} 臂无可行侧抓姿态候选: {_bounded_repr(failures)}"
+            )
+        return sorted(successes, key=lambda item: item[0].score)
 
     def execute_grasp(self, path: IKPath) -> ExecutionEvidence:
         """Original fine-grained name: collision-check and execute one path."""
@@ -701,6 +818,62 @@ class TraditionalGraspAPI:
             self.collision_checker,
             self.config.safety.collision_check_required,
         )
+
+
+def _combine_side_grasp_path(
+    *,
+    arm: str,
+    joint_names: tuple[str, ...],
+    seed: np.ndarray,
+    bridge: list[np.ndarray],
+    approach: IKPath,
+    orientation_penalty: float,
+) -> IKPath:
+    positions = [*bridge, *approach.positions]
+    waypoint_names = [
+        *(
+            [f"joint_pregrasp:{index + 1}/{len(bridge)}" for index in range(len(bridge) - 1)]
+            if len(bridge) > 1
+            else []
+        ),
+        "pregrasp",
+        *approach.waypoint_names,
+    ]
+    if len(positions) != len(waypoint_names):
+        raise RuntimeError("侧抓组合路径的位置与名称数量不一致")
+    previous = np.asarray(seed, dtype=np.float64)
+    max_step = 0.0
+    score = float(orientation_penalty)
+    for position in positions:
+        delta = np.asarray(position, dtype=np.float64) - previous
+        max_step = max(max_step, float(np.max(np.abs(delta))))
+        score += float(np.sum(delta**2))
+        previous = position
+    return IKPath(
+        arm=arm,
+        joint_names=joint_names,
+        positions=positions,
+        waypoint_names=waypoint_names,
+        max_joint_step_rad=max_step,
+        score=score,
+    )
+
+
+def _serialize_plan(
+    path: IKPath,
+    seed: np.ndarray,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "arm_side": path.arm,
+        "joint_names": list(path.joint_names),
+        "seed_q": np.asarray(seed, dtype=np.float64).tolist(),
+        "positions_rad": [position.tolist() for position in path.positions],
+        "waypoint_names": list(path.waypoint_names),
+        "max_joint_step_rad": path.max_joint_step_rad,
+        "score": path.score,
+        **metadata,
+    }
 
 
 def _coerce_bbox(

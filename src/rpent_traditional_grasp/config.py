@@ -58,7 +58,7 @@ class PerceptionConfig:
 
 @dataclass(slots=True)
 class PlannerConfig:
-    """Fixed side-grasp and Cartesian interpolation settings."""
+    """Constrained side-grasp and interpolation settings."""
 
     pregrasp_offset_m: float = 0.10
     lift_offset_m: float = 0.10
@@ -73,6 +73,25 @@ class PlannerConfig:
     tip_offset_m: float = 0.150215608966
     max_reach_m: float = 0.78
     preferred_arm: str = "auto"
+    side_grasp_pitch_degrees: tuple[float, ...] = (
+        10.0,
+        -10.0,
+        20.0,
+        -20.0,
+        30.0,
+        -30.0,
+    )
+    side_grasp_yaw_degrees: tuple[float, ...] = (
+        10.0,
+        -10.0,
+        20.0,
+        -20.0,
+    )
+    max_side_grasp_tilt_degrees: float = 30.0
+    joint_bridge_step_rad: float = 0.08
+    joint_bridge_max_tcp_drop_m: float = 0.02
+    side_grasp_orientation_penalty: float = 0.02
+    max_ranked_candidates: int = 6
     # TCP axes in torso/body frame. Columns are TCP x/y/z.
     left_tcp_rotation: tuple[float, ...] = (
         1.0,
@@ -203,6 +222,27 @@ class TraditionalGraspConfig:
             raise ValueError("right_tcp_rotation 必须包含 9 个元素")
         if self.planner.max_adaptive_subdivisions < 0:
             raise ValueError("max_adaptive_subdivisions 不能为负数")
+        if not 0.0 < self.planner.joint_bridge_step_rad <= 0.3:
+            raise ValueError("joint_bridge_step_rad 必须位于 (0, 0.3] rad")
+        if not 0.0 <= self.planner.joint_bridge_max_tcp_drop_m <= 0.1:
+            raise ValueError("joint_bridge_max_tcp_drop_m 必须位于 [0, 0.1] m")
+        if not 0.0 < self.planner.max_side_grasp_tilt_degrees <= 45.0:
+            raise ValueError("max_side_grasp_tilt_degrees 必须位于 (0, 45] deg")
+        if self.planner.side_grasp_orientation_penalty < 0.0:
+            raise ValueError("side_grasp_orientation_penalty 不能为负数")
+        if not 1 <= self.planner.max_ranked_candidates <= 20:
+            raise ValueError("max_ranked_candidates 必须位于 [1, 20]")
+        side_angles = (
+            *self.planner.side_grasp_pitch_degrees,
+            *self.planner.side_grasp_yaw_degrees,
+        )
+        if any(
+            not -self.planner.max_side_grasp_tilt_degrees
+            <= float(angle)
+            <= self.planner.max_side_grasp_tilt_degrees
+            for angle in side_angles
+        ):
+            raise ValueError("侧抓姿态候选角度超过 max_side_grasp_tilt_degrees")
         if self.safety.mode == "live":
             missing: list[str] = []
             if not self.safety.allow_motion:
@@ -228,7 +268,12 @@ def _dataclass_from_mapping(type_: type[_T], raw: Any) -> _T:
     if type_ is PerceptionConfig and "target_prompts" in values:
         values["target_prompts"] = tuple(values["target_prompts"])
     if type_ is PlannerConfig:
-        for name in ("left_tcp_rotation", "right_tcp_rotation"):
+        for name in (
+            "left_tcp_rotation",
+            "right_tcp_rotation",
+            "side_grasp_pitch_degrees",
+            "side_grasp_yaw_degrees",
+        ):
             if name in values:
                 values[name] = tuple(values[name])
     return type_(**values)

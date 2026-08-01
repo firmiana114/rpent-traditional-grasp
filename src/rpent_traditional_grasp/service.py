@@ -130,30 +130,57 @@ class TraditionalGraspPlanningService:
         if not isinstance(plan, dict):
             raise RuntimeError("规划成功但缺少 plan 对象")
         created_at_s = float(self.clock())
-        plan.update(
-            {
-                "schema_version": 1,
-                "object_prompt": object_prompt,
-                "requested_arm_side": arm_side,
-                "target_bbox": result.get("bbox"),
-                "created_at_s": created_at_s,
-                "expires_at_s": created_at_s + self.plan_ttl_s,
-                "state_timestamp_s": state_timestamp_s,
-                "capture_timestamp_s": result.get("capture_timestamp_s", 0.0),
-                "collision_checked": bool(result.get("collision_checked")),
-                "collision_check_detail": result.get("collision_check_detail"),
-                "code_revision": self.code_revision,
-                "config_sha256": self.config_sha256,
-            }
-        )
-        plan["plan_id"] = _plan_digest(plan)
+        raw_candidates = result.get("candidate_plans")
+        if not isinstance(raw_candidates, list) or not raw_candidates:
+            raw_candidates = [plan]
+        signed_candidates: list[dict[str, object]] = []
+        for index, candidate in enumerate(raw_candidates):
+            if not isinstance(candidate, dict):
+                raise RuntimeError(
+                    f"candidate_plans[{index}] 不是有效计划对象"
+                )
+            signed = dict(candidate)
+            signed.update(
+                {
+                    "schema_version": 1,
+                    "object_prompt": object_prompt,
+                    "requested_arm_side": arm_side,
+                    "target_bbox": result.get("bbox"),
+                    "created_at_s": created_at_s,
+                    "expires_at_s": created_at_s + self.plan_ttl_s,
+                    "state_timestamp_s": state_timestamp_s,
+                    "capture_timestamp_s": result.get(
+                        "capture_timestamp_s", 0.0
+                    ),
+                    "code_revision": self.code_revision,
+                    "config_sha256": self.config_sha256,
+                    "collision_checked": bool(
+                        candidate.get(
+                            "collision_checked",
+                            result.get("collision_checked", False),
+                        )
+                    ),
+                    "collision_check_detail": candidate.get(
+                        "collision_check_detail",
+                        result.get("collision_check_detail"),
+                    ),
+                }
+            )
+            signed["plan_id"] = _plan_digest(signed)
+            signed_candidates.append(signed)
+        plan = signed_candidates[0]
+        result["plan"] = plan
+        result["candidate_plans"] = signed_candidates
         result["plan_id"] = plan["plan_id"]
         logger.info(
             "可回溯抓取计划已生成: plan_id=%s target=%s arm=%s "
-            "points=%d expires_at=%.3f collision_checked=%s motion=False",
+            "candidate=%s ranked_candidates=%d points=%d expires_at=%.3f "
+            "collision_checked=%s motion=False",
             plan["plan_id"],
             object_prompt,
             plan.get("arm_side"),
+            plan.get("orientation_candidate"),
+            len(signed_candidates),
             len(plan.get("positions_rad", [])),
             plan["expires_at_s"],
             plan["collision_checked"],

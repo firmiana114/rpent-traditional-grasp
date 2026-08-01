@@ -48,3 +48,10 @@ def test_unknown_config_field_is_rejected() -> None:
         TraditionalGraspConfig.from_mapping(
             {"planner": {"automatic_home": True}}
         )
+
+
+def test_side_grasp_angle_outside_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="侧抓姿态候选角度超过"):
+        TraditionalGraspConfig.from_mapping(
+            {"planner": {"side_grasp_pitch_degrees": [50.0]}}
+        )

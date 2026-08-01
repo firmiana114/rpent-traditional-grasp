@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,7 +16,7 @@ from rpent_traditional_grasp.execution import (
     AlwaysSafeCollisionChecker,
     MockArmExecutor,
 )
-from rpent_traditional_grasp.ik import MockIKSolver
+from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
 from rpent_traditional_grasp.models import Detection, StereoObservation
 from rpent_traditional_grasp.perception import StaticDetector, StaticSegmenter
 from rpent_traditional_grasp.stereo import StaticStereoSource
@@ -149,7 +150,7 @@ def test_pick_object_xyz_stage_stops_before_ik_and_motion() -> None:
     assert result["status"] == "xyz_ready"
     assert result["selected_arm_side"] == "left"
     assert len(result["final_tcp_body_xyz_m"]) == 3
-    assert result["orientation_policy"] == "preserve_initial"
+    assert result["orientation_policy"] == "bounded_side_grasp_candidates"
     assert api.context.ik_path is None
     assert api.context.execution is None
 
@@ -170,6 +171,45 @@ def test_plan_pick_object_serializes_path_without_execution() -> None:
     assert result["plan"]["waypoint_names"].count("grasp") == 1
     assert api.context.execution is None
     assert api.executor.executed_paths == []
+
+
+def test_latest_field_target_selects_bounded_side_grasp_candidate() -> None:
+    root = Path(__file__).parents[2]
+    binary = root / "native/build/g1_trac_ik"
+    if not binary.exists():
+        pytest.skip("standalone TRAC-IK binary is not built")
+    api = make_api()
+    api.config.planner.ik_timeout_s = 0.05
+    estimate = api.context.estimate
+    if estimate is None:
+        api.search_object("bottle")
+        estimate = api.context.estimate
+    assert estimate is not None
+    estimate.center_body_m = np.array(
+        [0.4818, 0.07389839906243502, 0.04838482502786132]
+    )
+
+    with TracIKProcess(
+        binary,
+        root / "robot/chains/g1_left_arm.chain",
+        "left",
+        timeout_s=0.05,
+    ) as solver:
+        api.ik_solvers["left"] = solver
+        candidates = api.plan_contact_grasp_candidates(
+            estimate,
+            "left",
+            current_joints=np.zeros(7),
+        )
+
+    names = [metadata["orientation_candidate"] for _, metadata in candidates]
+    assert "initial" not in names
+    assert "pitch_+20deg" in names
+    assert "pitch_+20deg_yaw_-10deg" in names
+    selected, metadata = candidates[0]
+    assert metadata["orientation_policy"] == "bounded_side_grasp_candidates"
+    assert selected.waypoint_names.count("pregrasp") == 1
+    assert selected.waypoint_names.count("grasp") == 1
 
 
 def test_pick_object_public_signature_matches_rpent() -> None:

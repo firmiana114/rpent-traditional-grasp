@@ -201,7 +201,7 @@ def build_gripper_xyz_report(
         "selection_policy": gripper.selection_policy,
         "final_tcp_body_xyz_m": actual.tolist(),
         "tcp_reference": "modeled_grasp_center_between_fingers",
-        "orientation_policy": "preserve_initial",
+        "orientation_policy": "bounded_side_grasp_candidates",
         "orientation_commanded": False,
         "distance_from_body_origin_m": gripper.distance_m,
         "max_reach_gate_m": float(planner_config.max_reach_m),

@@ -174,7 +174,7 @@ def diagnose_ik_reachability(
         "stage": "ik_reachability_diagnostic",
         "motion_commanded": False,
         "target_body_xyz_m": estimate.center_body_m.tolist(),
-        "orientation_policy_production": "preserve_initial",
+        "orientation_policy_production": "bounded_side_grasp_candidates",
         "position_only_is_diagnostic": True,
         "arms": arms,
     }

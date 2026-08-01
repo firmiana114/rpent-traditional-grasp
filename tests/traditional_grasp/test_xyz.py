@@ -115,7 +115,7 @@ def test_gripper_xyz_report_targets_bottle_center_and_preserves_orientation() ->
     assert report["entrypoint"] == "pick_object"
     assert target["selected_arm"] == "left"
     assert target["final_tcp_body_xyz_m"] == [0.52, 0.08, 0.06]
-    assert target["orientation_policy"] == "preserve_initial"
+    assert target["orientation_policy"] == "bounded_side_grasp_candidates"
     assert target["orientation_commanded"] is False
     assert report["calibration"]["metric_gripper_xyz_approved"] is False
     assert (

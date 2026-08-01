@@ -77,3 +77,47 @@ def test_planning_service_attaches_trace_metadata_without_motion(caplog) -> None
     assert api.last_kwargs["bbox_format"] == "pixel"
     assert "bbox=[10, 20, 30, 40] bbox_format=pixel" in "\n".join(caplog.messages)
     np.testing.assert_allclose(executor.current_joints("left"), np.zeros(7))
+
+
+def test_planning_service_signs_every_ranked_side_grasp_candidate() -> None:
+    api = FakePlanningAPI()
+    original = api.plan_pick_object
+
+    def plan_with_candidates(**kwargs: object) -> dict[str, object]:
+        result = original(**kwargs)
+        primary = dict(result["plan"])
+        primary["orientation_candidate"] = "pitch_+20deg"
+        secondary = dict(primary)
+        secondary["orientation_candidate"] = "pitch_+30deg"
+        secondary["score"] = 0.08
+        result["plan"] = primary
+        result["candidate_plans"] = [primary, secondary]
+        return result
+
+    api.plan_pick_object = plan_with_candidates  # type: ignore[method-assign]
+    service = TraditionalGraspPlanningService(
+        api,
+        PlanningArmExecutor(),
+        code_revision="abc123",
+        config_sha256="config123",
+        plan_ttl_s=10.0,
+        clock=lambda: 100.0,
+    )
+
+    result = service.handle(
+        {
+            "operation": "plan_pick",
+            "payload": {
+                "object_prompt": "water bottle",
+                "arm_side": "left",
+                "current_q": [0.0] * 14,
+                "state_timestamp_s": 90.0,
+            },
+        }
+    )
+
+    plans = result["candidate_plans"]
+    assert len(plans) == 2
+    assert plans[0]["plan_id"] != plans[1]["plan_id"]
+    assert all(len(plan["plan_id"]) == 64 for plan in plans)
+    assert result["plan"] == plans[0]

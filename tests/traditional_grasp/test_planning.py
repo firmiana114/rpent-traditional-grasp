@@ -7,7 +7,9 @@ from rpent_traditional_grasp.config import PlannerConfig
 from rpent_traditional_grasp.models import BottleEstimate
 from rpent_traditional_grasp.planning import (
     compute_gripper_tcp_target,
+    interpolate_joint_bridge,
     plan_fixed_side_grasp,
+    side_grasp_rotation_candidates,
 )
 
 
@@ -75,3 +77,53 @@ def test_gripper_target_rejects_distance_outside_gate() -> None:
             requested_arm="auto",
             config=PlannerConfig(max_reach_m=0.78),
         )
+
+
+def test_side_grasp_candidates_are_bounded_and_include_pitch_twenty() -> None:
+    config = PlannerConfig()
+
+    candidates = side_grasp_rotation_candidates(np.eye(3), config)
+
+    assert candidates[0].name == "initial"
+    names = {candidate.name for candidate in candidates}
+    assert "pitch_+20deg" in names
+    assert "pitch_+20deg_yaw_-10deg" in names
+    assert max(
+        np.degrees(candidate.angular_offset_rad) for candidate in candidates
+    ) <= config.max_side_grasp_tilt_degrees
+
+
+def test_pitched_side_grasp_keeps_final_approach_horizontal() -> None:
+    config = PlannerConfig()
+    rotation = next(
+        candidate.rotation
+        for candidate in side_grasp_rotation_candidates(np.eye(3), config)
+        if candidate.name == "pitch_+20deg"
+    )
+
+    waypoints = plan_fixed_side_grasp(
+        _estimate((0.48, 0.08, 0.05)),
+        "left",
+        config,
+        tcp_rotation=rotation,
+    )
+
+    pregrasp_delta = waypoints[1].pose.position_m - waypoints[0].pose.position_m
+    assert pregrasp_delta[2] == pytest.approx(0.0)
+    assert np.linalg.norm(pregrasp_delta) == pytest.approx(
+        config.pregrasp_offset_m
+    )
+
+
+def test_joint_bridge_respects_maximum_joint_step() -> None:
+    bridge = interpolate_joint_bridge(
+        np.zeros(7),
+        np.array([0.2, -0.1, 0.0, 0.16, 0.0, 0.0, 0.0]),
+        max_joint_step_rad=0.08,
+    )
+
+    previous = np.zeros(7)
+    for position in bridge:
+        assert np.max(np.abs(position - previous)) <= 0.08 + 1e-12
+        previous = position
+    np.testing.assert_allclose(bridge[-1], [0.2, -0.1, 0.0, 0.16, 0, 0, 0])

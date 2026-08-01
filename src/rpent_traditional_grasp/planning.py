@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -18,13 +19,22 @@ from rpent_traditional_grasp.models import (
 logger = get_logger("planning")
 
 
+@dataclass(frozen=True, slots=True)
+class SideGraspRotationCandidate:
+    """One bounded TCP orientation considered for a horizontal side approach."""
+
+    name: str
+    rotation: np.ndarray
+    angular_offset_rad: float
+
+
 def plan_fixed_side_grasp(
     estimate: BottleEstimate,
     arm: str,
     config: PlannerConfig,
     tcp_rotation: np.ndarray | None = None,
 ) -> list[CartesianWaypoint]:
-    """Plan a translation-only grasp while preserving the supplied TCP rotation."""
+    """Plan a horizontal side approach for one supplied TCP orientation."""
     gripper_target = compute_gripper_tcp_target(
         estimate,
         requested_arm=arm,
@@ -45,12 +55,19 @@ def plan_fixed_side_grasp(
     if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6):
         raise ValueError(f"{arm} TCP 固定姿态不是正交旋转矩阵")
 
-    # G1 body frame is x-forward, y-left, z-up.
-    forward = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    # G1 body frame is x-forward, y-left, z-up. The TCP x axis is the nominal
+    # tool approach axis. Projecting it onto the body XY plane keeps the final
+    # insertion horizontal even when a bounded wrist pitch is selected.
+    approach = rotation[:, 0].copy()
+    approach[2] = 0.0
+    approach_norm = float(np.linalg.norm(approach))
+    if approach_norm < 1e-6:
+        raise ValueError("TCP 侧抓接近轴不能垂直于桌面")
+    approach /= approach_norm
     up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-    pregrasp = target - config.pregrasp_offset_m * forward
+    pregrasp = target - config.pregrasp_offset_m * approach
     lifted = target + config.lift_offset_m * up
-    retreat = lifted - config.retreat_offset_m * forward
+    retreat = lifted - config.retreat_offset_m * approach
     waypoints = [
         CartesianWaypoint("pregrasp", Pose(pregrasp, rotation)),
         CartesianWaypoint("grasp", Pose(target, rotation)),
@@ -59,15 +76,106 @@ def plan_fixed_side_grasp(
     ]
     logger.info(
         "固定侧抓路径已生成: arm=%s target=[%.3f,%.3f,%.3f] "
-        "rotation=%s pregrasp=%.3fm lift=%.3fm retreat=%.3fm",
+        "rotation=%s approach_xy=[%.3f,%.3f] pregrasp=%.3fm "
+        "lift=%.3fm retreat=%.3fm",
         arm,
         *target,
         rotation_source,
+        *approach[:2],
         config.pregrasp_offset_m,
         config.lift_offset_m,
         config.retreat_offset_m,
     )
     return waypoints
+
+
+def side_grasp_rotation_candidates(
+    initial_rotation: np.ndarray,
+    config: PlannerConfig,
+) -> list[SideGraspRotationCandidate]:
+    """Generate bounded pitch/yaw alternatives around the current TCP pose."""
+    initial = np.asarray(initial_rotation, dtype=np.float64)
+    if initial.shape != (3, 3):
+        raise ValueError("初始 TCP 姿态必须是 3x3 旋转矩阵")
+    candidates = [
+        SideGraspRotationCandidate("initial", initial.copy(), 0.0)
+    ]
+    for axis_name, axis, values in (
+        (
+            "pitch",
+            np.array([0.0, 1.0, 0.0], dtype=np.float64),
+            config.side_grasp_pitch_degrees,
+        ),
+        (
+            "yaw",
+            np.array([0.0, 0.0, 1.0], dtype=np.float64),
+            config.side_grasp_yaw_degrees,
+        ),
+    ):
+        for angle_degrees in values:
+            angle = math.radians(float(angle_degrees))
+            rotation = initial @ _axis_angle_rotation(axis, angle)
+            candidates.append(
+                SideGraspRotationCandidate(
+                    f"{axis_name}_{float(angle_degrees):+g}deg",
+                    rotation,
+                    abs(angle),
+                )
+            )
+    for pitch_degrees in config.side_grasp_pitch_degrees:
+        pitch = math.radians(float(pitch_degrees))
+        pitch_rotation = _axis_angle_rotation(
+            np.array([0.0, 1.0, 0.0], dtype=np.float64),
+            pitch,
+        )
+        for yaw_degrees in config.side_grasp_yaw_degrees:
+            yaw = math.radians(float(yaw_degrees))
+            rotation = (
+                initial
+                @ pitch_rotation
+                @ _axis_angle_rotation(
+                    np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                    yaw,
+                )
+            )
+            angular_offset = _rotation_angle(initial, rotation)
+            if angular_offset > math.radians(
+                config.max_side_grasp_tilt_degrees
+            ) + 1e-9:
+                continue
+            candidates.append(
+                SideGraspRotationCandidate(
+                    "pitch_"
+                    f"{float(pitch_degrees):+g}deg_yaw_"
+                    f"{float(yaw_degrees):+g}deg",
+                    rotation,
+                    angular_offset,
+                )
+            )
+    return candidates
+
+
+def interpolate_joint_bridge(
+    start: np.ndarray,
+    target: np.ndarray,
+    max_joint_step_rad: float,
+) -> list[np.ndarray]:
+    """Interpolate a bounded joint-space bridge including its target."""
+    start_q = np.asarray(start, dtype=np.float64)
+    target_q = np.asarray(target, dtype=np.float64)
+    if start_q.shape != (7,) or target_q.shape != (7,):
+        raise ValueError("关节空间桥接必须使用两个 7 轴向量")
+    if max_joint_step_rad <= 0.0:
+        raise ValueError("max_joint_step_rad 必须大于 0")
+    delta = target_q - start_q
+    segments = max(
+        1,
+        math.ceil(float(np.max(np.abs(delta))) / max_joint_step_rad),
+    )
+    return [
+        start_q + (index / segments) * delta
+        for index in range(1, segments + 1)
+    ]
 
 
 def compute_gripper_tcp_target(
