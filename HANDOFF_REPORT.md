@@ -90,16 +90,12 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   `torso_link` 链完全一致；Dex1-1 名义 TCP `0.150215608966 m`；运动链
   串联杆长上限 `0.560610 m`；Thor 历史图 shadow 感知与两阶段图片入口均
   已回归；最新现场目标经 38 点组合侧抓与父项目 87 点自碰撞采样验证。
-- 2026-08-01 换新双目标定 `config/thor_stereo_20260801.json`（来源 Thor
-  `calibration_result.json`，9x6 内角点 25 mm 棋盘）：旧标定焦距偏低约
-  20%、相对旋转差 1.6°；现场缓存图 SIFT 极线错位由 4.4px 降至 1.6px，
-  实证新标定更接近真实相机。
-- 新相机-机身外参 `config/thor_camera_to_body_20260801.json`：URDF
-  `d435_joint` 设计俯仰 `0.8307767 rad` 与新标定矫正旋转 R1（8.45°）复合，
-  平移取 URDF 模组中心沿矫正 x 轴偏移半基线到左相机。旧 legacy 外参源自
-  `object_grab.py` 手写值，且把矫正系当原始光学系使用，已被替换但保留。
-- `thor.example.json` 已指向两个新文件；三项标定验证门禁保持 false；
-  新旧配置文件均有解析/刚体测试，53 项 pytest 全部通过。
+- 2026-08-01 换新双目标定 `config/thor_stereo_20260801.json`（Thor 9x6 内角点
+  25 mm 棋盘）：旧标定焦距偏低约 20%、相对旋转差 1.6°，缓存图 SIFT 极线错位
+  由 4.4px 降至 1.6px。新外参 `config/thor_camera_to_body_20260801.json` 由
+  URDF `d435_joint` 设计俯仰与新标定矫正旋转 R1（8.45°）复合、平移取模组中心
+  偏半基线；旧 legacy 外参是 `object_grab.py` 手写值且混淆矫正系，已替换保留。
+  `thor.example.json` 指向两新文件，门禁保持 false，53 项 pytest 通过。
 - 仿真仓库已同步新标定与新外参（repo 与 macos 两份 yaml）；仿真 16 项
   测试通过，`x=0.48` 右臂全物理抓取冒烟通过（感知误差 7 mm）。
 - CaP-X 旧后端对照并已放弃（分支 `test/capx-body` 仅作记录）：其 IK 末端
