@@ -37,7 +37,7 @@
 - `thor.py`：Thor 相机、现有模型资源和注入式 CapX/碰撞检查适配。
 - `native/`：官方 TRAC-IK 核心、ROS2 最小兼容层和 G1 文本链求解器。
 - `robot/`：经核对的 G1 URDF 与左右 7 轴运动链。
-- `scripts/`：运动链导出、Thor 无 sudo 原生构建、影子运行入口。
+- `scripts/`：运动链导出、Thor/macOS 原生构建、影子运行入口。
 - `xyz.py` 及对应脚本：图片到物体/夹爪 TCP XYZ 验收；不启动 IK 或控制器。
 - `tests/traditional_grasp/`：几何、配置、安全、接口闭环和真实原生 IK 测试。
 
@@ -80,8 +80,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 当前状态与已验证事实
 
-- 示例配置已显式引用共享 Dex1-1 规格并修正 TCP 为 `0.150215608966 m`；本机
-  34 项 pytest 通过、6 项原生条件测试跳过，兄弟仿真已用不变 API 跑通 Oracle 物理链。
+- macOS arm64 原生 TRAC-IK 已由 `build_native_macos.sh` 构建，左右 CTest 与
+  40 项 pytest 全通过；兄弟仿真默认使用原生求解并跑通左右臂 Oracle 物理链。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
