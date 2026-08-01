@@ -9,6 +9,7 @@
     "crestereo_model": "/home/aiot/mingjuwang/vision/ONNX-CREStereo-Depth-Estimation/models/crestereo_init_iter5_480x640.onnx",
     "stereo_calibration": "config/thor_stereo_legacy.json",
     "camera_to_body": "config/thor_camera_to_body_legacy.json",
+    "gripper_specification": "config/g1d_dex1_1_nominal.json",
     "robot_urdf": "/home/aiot/fuchengjia/Projects/xr_teleoperate/assets/g1/g1_body29_hand14.urdf",
     "left_ik_binary": "native/build/g1_trac_ik",
     "right_ik_binary": "native/build/g1_trac_ik"
@@ -25,7 +26,7 @@
     "cartesian_step_m": 0.01,
     "rotation_step_rad": 0.12,
     "max_adaptive_subdivisions": 5,
-    "tip_offset_m": 0.05,
+    "tip_offset_m": 0.150215608966,
     "preferred_arm": "auto"
   },
   "safety": {

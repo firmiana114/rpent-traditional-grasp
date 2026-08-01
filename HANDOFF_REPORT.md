@@ -80,8 +80,8 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 
 ## 当前状态与已验证事实
 
-- 既有 Linux/aarch64 容器通过 C++ 构建、左右臂 CTest 和 38 项 pytest；本轮
-  macOS 共享夹爪规格变更通过 34 项 pytest、跳过 6 项原生条件测试，全程无运动。
+- 示例配置已显式引用共享 Dex1-1 规格并修正 TCP 为 `0.150215608966 m`；本机
+  34 项 pytest 通过、6 项原生条件测试跳过，兄弟仿真已用不变 API 跑通 Oracle 物理链。
 - GitHub 私有远端为 `firmiana114/rpent-traditional-grasp`。
 - 已移除本项目自设的 `0.18 rad` 关节跳变硬门限，与原始 `pick_object`
   对齐；最大关节变化仍写入 INFO 日志及返回结果，仅作为诊断指标。
