@@ -70,7 +70,7 @@ class PlannerConfig:
     ik_tolerance: float = 1e-5
     fk_position_tolerance_m: float = 0.012
     fk_rotation_tolerance_rad: float = 0.08
-    tip_offset_m: float = 0.150215608966
+    tip_offset_m: float = 0.05
     max_reach_m: float = 0.78
     preferred_arm: str = "auto"
     side_grasp_pitch_degrees: tuple[float, ...] = (

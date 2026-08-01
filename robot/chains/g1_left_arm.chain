@@ -8,5 +8,5 @@ REVOLUTE left_elbow_joint left_elbow_link 0.015783 0 -0.080518 0 0 0 0 1 0 -1.04
 REVOLUTE left_wrist_roll_joint left_wrist_roll_link 0.100 0.00188791 -0.010 0 0 0 1 0 0 -1.972222054 1.972222054
 REVOLUTE left_wrist_pitch_joint left_wrist_pitch_link 0.038 0 0 0 0 0 0 1 0 -1.614429558 1.614429558
 REVOLUTE left_wrist_yaw_joint left_wrist_yaw_link 0.046 0 0 0 0 0 0 0 1 -1.614429558 1.614429558
-FIXED left_tcp left_tcp_link 0.150215608966 0 0 0 0 0
+FIXED left_tcp left_tcp_link 0.05 0 0 0 0 0
 END
