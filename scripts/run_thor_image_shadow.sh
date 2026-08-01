@@ -5,7 +5,11 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd -- "${script_dir}/.." && pwd)"
-yolo_python="${THOR_YOLO_PYTHON:-/home/aiot/miniconda3/envs/yolo_world/bin/python}"
+# The default interpreter is a GPU overlay venv layered on yolo_world: it
+# inherits torch/cv2/ultralytics/tensorrt and only shadows numpy 1.26 plus an
+# onnxruntime carrying CUDA/TensorRT providers, so CREStereo runs on the GPU
+# instead of silently falling back to the CPU.
+yolo_python="${THOR_YOLO_PYTHON:-/home/aiot/wuxi/venvs/rpent-grasp-gpu/bin/python}"
 abot_packages="${THOR_ABOT_PACKAGES:-/home/aiot/miniconda3/envs/abot-claw/lib/python3.10/site-packages}"
 deps_root="$(mktemp -d "${TMPDIR:-/tmp}/rpent-yolo-shadow-deps.XXXXXX")"
 
@@ -19,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 if ! test -x "${yolo_python}"; then
-  log_info "yolo_world Python 不可执行: ${yolo_python}"
+  log_info "感知解释器不可执行: ${yolo_python}"
   exit 2
 fi
 

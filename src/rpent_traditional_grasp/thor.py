@@ -277,6 +277,45 @@ class CallbackCollisionChecker:
         return self.callback(path)
 
 
+def select_perception_device() -> tuple[str, int | str]:
+    """Pick the perception device so Thor keeps CUDA and other hosts still run.
+
+    Returns the Torch device string used by SAM2 and the external CREStereo
+    adapter, plus the matching Ultralytics device argument. Set
+    ``RPENT_TRADITIONAL_GRASP_DEVICE`` to force ``cuda``/``mps``/``cpu``.
+    """
+    override = (os.getenv("RPENT_TRADITIONAL_GRASP_DEVICE") or "").strip().lower()
+    if override:
+        if override not in {"cuda", "mps", "cpu"}:
+            raise ValueError(
+                "RPENT_TRADITIONAL_GRASP_DEVICE 必须是 cuda、mps 或 cpu，"
+                f"实际为 {override}"
+            )
+        selected = override
+        reason = "environment_override"
+    else:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                selected, reason = "cuda", "torch.cuda.is_available"
+            elif torch.backends.mps.is_available():
+                selected, reason = "mps", "torch.backends.mps.is_available"
+            else:
+                selected, reason = "cpu", "no_accelerator_detected"
+        except Exception:
+            logger.exception("探测 Torch 加速设备失败，回退 CPU")
+            selected, reason = "cpu", "torch_probe_failed"
+    ultralytics_device: int | str = 0 if selected == "cuda" else selected
+    logger.info(
+        "感知设备已选择: device=%s ultralytics_device=%s reason=%s",
+        selected,
+        ultralytics_device,
+        reason,
+    )
+    return selected, ultralytics_device
+
+
 def build_thor_shadow_api(
     config_path: str | Path,
     *,
@@ -323,12 +362,13 @@ def build_thor_shadow_api(
         raise ValueError(
             "必须提供 left_image/right_image；在线采集需显式设置 online_camera"
         )
+    torch_device, ultralytics_device = select_perception_device()
     disparity = ExternalCREStereoBackend(
         resources.crestereo_repo,
         resources.crestereo_model,
-        module_name="object_grab",
-        class_name="CREStereo",
-        device="cuda",
+        module_name=resources.crestereo_module,
+        class_name=resources.crestereo_class,
+        device=torch_device,
     )
     stereo_source = RectifiedStereoPipeline(
         camera,
@@ -343,13 +383,13 @@ def build_thor_shadow_api(
         resources.yolo_pt_model,
         confidence=config.perception.detection_confidence,
         iou=config.perception.detection_iou,
-        device=0,
+        device=ultralytics_device,
     )
     segmenter = Sam2BoxSegmenter(
         resources.sam2_repo,
         resources.sam2_checkpoint,
         resources.sam2_config,
-        device="cuda",
+        device=torch_device,
         artifact_dir=artifact_dir,
     )
     if perception_only:

@@ -1,0 +1,50 @@
+{
+  "resources": {
+    "yolo_model": "/Users/firmiana/project/rpent-models/yolo_world/yolov8x-worldv2.pt",
+    "yolo_pt_model": "/Users/firmiana/project/rpent-models/yolo_world/yolov8x-worldv2.pt",
+    "sam2_repo": "/Users/firmiana/project/rpent-models/vendor/sam2_repo",
+    "sam2_checkpoint": "/Users/firmiana/project/rpent-models/sam2/sam2.1_hiera_small.pt",
+    "sam2_config": "configs/sam2.1/sam2.1_hiera_s.yaml",
+    "crestereo_repo": "/Users/firmiana/project/rpent-models/vendor/crestereo_repo",
+    "crestereo_model": "/Users/firmiana/project/rpent-models/crestereo/crestereo_init_iter5_480x640.onnx",
+    "crestereo_module": "crestereo",
+    "crestereo_class": "CREStereo",
+    "stereo_calibration": "config/thor_stereo_20260801.json",
+    "camera_to_body": "config/thor_camera_to_body_20260801.json",
+    "gripper_specification": "config/g1d_dex1_1_nominal.json",
+    "robot_urdf": "robot/g1_body29_hand14.urdf",
+    "left_ik_binary": "native/build/g1_trac_ik",
+    "right_ik_binary": "native/build/g1_trac_ik"
+  },
+  "perception": {
+    "target_prompts": ["bottle", "water bottle", "bottled water"],
+    "detection_confidence": 0.45,
+    "detection_iou": 0.45
+  },
+  "planner": {
+    "pregrasp_offset_m": 0.1,
+    "lift_offset_m": 0.1,
+    "retreat_offset_m": 0.08,
+    "cartesian_step_m": 0.01,
+    "rotation_step_rad": 0.12,
+    "max_adaptive_subdivisions": 5,
+    "side_grasp_pitch_degrees": [10, -10, 20, -20, 30, -30],
+    "side_grasp_yaw_degrees": [10, -10, 20, -20],
+    "max_side_grasp_tilt_degrees": 30,
+    "joint_bridge_step_rad": 0.08,
+    "joint_bridge_max_tcp_drop_m": 0.02,
+    "side_grasp_orientation_penalty": 0.02,
+    "max_ranked_candidates": 6,
+    "tip_offset_m": 0.150215608966,
+    "preferred_arm": "auto"
+  },
+  "safety": {
+    "mode": "shadow",
+    "allow_motion": false,
+    "stereo_calibration_validated": false,
+    "camera_to_body_validated": false,
+    "gripper_tcp_calibration_validated": false,
+    "collision_check_required": true,
+    "require_grasp_verification": true
+  }
+}

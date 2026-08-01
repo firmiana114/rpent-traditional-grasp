@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from rpent_traditional_grasp.config import TraditionalGraspConfig
 from rpent_traditional_grasp.stereo import (
     RectifiedStereoPipeline,
     StereoCalibration,
@@ -15,6 +16,7 @@ from rpent_traditional_grasp.thor import (
     ImagePairStereoCamera,
     ThorStereoCamera,
     load_transform,
+    select_perception_device,
 )
 
 
@@ -197,3 +199,49 @@ def test_image_pair_camera_rejects_mismatched_sizes(
 
     with pytest.raises(ValueError, match="尺寸不一致"):
         ImagePairStereoCamera(left_path, right_path).capture_stereo()
+
+
+@pytest.mark.parametrize("name", ["thor.example.json", "macos.example.json"])
+def test_checked_in_deployment_config_is_parseable(name: str) -> None:
+    root = Path(__file__).parents[2]
+    config = TraditionalGraspConfig.from_json(root / name)
+
+    assert config.safety.mode == "shadow"
+    assert config.safety.allow_motion is False
+    assert config.resources.crestereo_class == "CREStereo"
+
+
+def test_macos_config_points_at_the_public_crestereo_module() -> None:
+    root = Path(__file__).parents[2]
+    thor = TraditionalGraspConfig.from_json(root / "thor.example.json")
+    macos = TraditionalGraspConfig.from_json(root / "macos.example.json")
+
+    assert thor.resources.crestereo_module == "object_grab"
+    assert macos.resources.crestereo_module == "crestereo"
+
+
+def test_perception_device_override_is_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RPENT_TRADITIONAL_GRASP_DEVICE", "cuda")
+    assert select_perception_device() == ("cuda", 0)
+
+    monkeypatch.setenv("RPENT_TRADITIONAL_GRASP_DEVICE", "mps")
+    assert select_perception_device() == ("mps", "mps")
+
+    monkeypatch.setenv("RPENT_TRADITIONAL_GRASP_DEVICE", "tpu")
+    with pytest.raises(ValueError, match="必须是 cuda、mps 或 cpu"):
+        select_perception_device()
+
+
+def test_perception_device_falls_back_to_cpu_without_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("RPENT_TRADITIONAL_GRASP_DEVICE", raising=False)
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    assert select_perception_device() == ("cpu", "cpu")

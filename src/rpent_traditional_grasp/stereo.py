@@ -275,6 +275,24 @@ class RectifiedStereoPipeline:
         )
 
 
+# onnxruntime providers that actually run inference on local accelerators.
+# AzureExecutionProvider is a remote-inference entry point, not an accelerator,
+# and CPU-only builds still advertise it, so it must stay out of this set.
+_ACCELERATED_PROVIDERS = frozenset(
+    {
+        "CUDAExecutionProvider",
+        "TensorrtExecutionProvider",
+        "NvTensorRTRTXExecutionProvider",
+        "ROCMExecutionProvider",
+        "MIGraphXExecutionProvider",
+        "OpenVINOExecutionProvider",
+        "CoreMLExecutionProvider",
+        "DmlExecutionProvider",
+        "QNNExecutionProvider",
+    }
+)
+
+
 class ExternalCREStereoBackend:
     """Lazy adapter for a deployment-provided CREStereo implementation."""
 
@@ -334,7 +352,47 @@ class ExternalCREStereoBackend:
             self.class_name,
             self.device,
         )
+        self._log_execution_providers()
         return self._model
+
+    def _log_execution_providers(self) -> None:
+        """Record the runtime's effective providers so CPU fallback is visible."""
+        session = getattr(self._model, "session", None)
+        providers = getattr(session, "get_providers", None)
+        if providers is None:
+            logger.info(
+                "CREStereo 后端未暴露 onnxruntime 会话，跳过执行提供者检查: "
+                "module=%s class=%s",
+                self.module_name,
+                self.class_name,
+            )
+            return
+        try:
+            active = list(providers())
+        except Exception:
+            logger.exception(
+                "读取 CREStereo 执行提供者失败: module=%s class=%s",
+                self.module_name,
+                self.class_name,
+            )
+            return
+        accelerated = [name for name in active if name in _ACCELERATED_PROVIDERS]
+        if accelerated:
+            logger.info(
+                "CREStereo 执行提供者: active=%s accelerated=%s device=%s",
+                ",".join(active),
+                ",".join(accelerated),
+                self.device,
+            )
+            return
+        logger.warning(
+            "CREStereo 回退到纯 CPU 推理，深度耗时会高出约两个数量级: "
+            "active=%s device=%s model=%s；请改用带 CUDA/TensorRT 提供者的 "
+            "onnxruntime 解释器",
+            ",".join(active) or "none",
+            self.device,
+            self.model_path,
+        )
 
 
 class StaticStereoSource:

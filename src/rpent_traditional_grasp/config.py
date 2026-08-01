@@ -26,6 +26,11 @@ class ResourceConfig:
     sam2_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
     crestereo_repo: str = "crestereo"
     crestereo_model: str = "crestereo/crestereo_eth3d.pth"
+    # Thor wraps CREStereo in object_grab.py while the laptop deployment imports
+    # the public ONNX-CREStereo-Depth-Estimation package, so the import name is
+    # configuration rather than a constant.
+    crestereo_module: str = "object_grab"
+    crestereo_class: str = "CREStereo"
     stereo_calibration: str = "config/stereo_calibration.json"
     camera_to_body: str = "config/camera_to_body.json"
     gripper_specification: str = "config/g1d_dex1_1_nominal.json"
