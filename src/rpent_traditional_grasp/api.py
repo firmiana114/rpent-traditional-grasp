@@ -8,6 +8,12 @@ from typing import Protocol
 import numpy as np
 
 from rpent_traditional_grasp.config import TraditionalGraspConfig
+from rpent_traditional_grasp.diagnostics import (
+    ArmChainGeometry,
+    ArmReachAssessment,
+    assess_arm_reach,
+    load_arm_chain_geometry,
+)
 from rpent_traditional_grasp.execution import (
     ArmExecutor,
     CollisionChecker,
@@ -35,6 +41,47 @@ from rpent_traditional_grasp.planning import (
 )
 
 logger = get_logger("api")
+
+
+def _load_arm_geometries(
+    arm_chain_files: dict[str, str | Path] | None,
+) -> dict[str, ArmChainGeometry]:
+    """Load the optional chain geometry used by the no-motion reach precheck."""
+    if not arm_chain_files:
+        logger.info("未提供运动链文件，可达性预检不可用；规划失败将只报逆解错误")
+        return {}
+    geometries: dict[str, ArmChainGeometry] = {}
+    for arm, chain_file in arm_chain_files.items():
+        try:
+            geometries[arm] = load_arm_chain_geometry(chain_file, arm)
+        except Exception:
+            logger.exception(
+                "加载运动链几何失败，该臂跳过可达性预检: arm=%s path=%s",
+                arm,
+                chain_file,
+            )
+    return geometries
+
+
+def _reach_summary(
+    assessments: dict[str, ArmReachAssessment],
+) -> dict[str, object]:
+    """Fold per-arm verdicts into the fields the upper layers act on."""
+    advances = [
+        assessment.required_base_advance_m
+        for assessment in assessments.values()
+        if assessment.required_base_advance_m is not None
+    ]
+    return {
+        "arms": {arm: item.as_dict() for arm, item in assessments.items()},
+        "any_arm_within_serial_length_upper_bound": any(
+            item.within_serial_length_upper_bound for item in assessments.values()
+        ),
+        "any_arm_within_planning_radius": any(
+            item.within_planning_radius for item in assessments.values()
+        ),
+        "required_base_advance_m": min(advances) if advances else None,
+    }
 
 
 def _bounded_repr(value: object, limit: int = 256) -> str:
@@ -66,6 +113,7 @@ class TraditionalGraspAPI:
         executor: ArmExecutor,
         camera_to_body: np.ndarray,
         collision_checker: CollisionChecker | None = None,
+        arm_chain_files: dict[str, str | Path] | None = None,
     ) -> None:
         config.validate()
         gripper_spec_path = Path(config.resources.gripper_specification)
@@ -104,6 +152,7 @@ class TraditionalGraspAPI:
         self.executor = executor
         self.camera_to_body = transform
         self.collision_checker = collision_checker
+        self.arm_geometries = _load_arm_geometries(arm_chain_files)
         self.context = PipelineContext()
         self._last_target: str | None = None
         logger.info(
@@ -227,6 +276,39 @@ class TraditionalGraspAPI:
             "valid_depth_pixels": estimate.valid_depth_pixels,
         }
 
+    def assess_target_reach(
+        self,
+        target_body_xyz_m: np.ndarray,
+        *,
+        arms: list[str] | None = None,
+    ) -> dict[str, object] | None:
+        """Judge arm reach without solving IK; ``None`` when geometry is absent."""
+        if not self.arm_geometries:
+            return None
+        selected = {
+            arm: geometry
+            for arm, geometry in self.arm_geometries.items()
+            if arms is None or arm in arms
+        }
+        if not selected:
+            return None
+        assessments = assess_arm_reach(
+            np.asarray(target_body_xyz_m, dtype=np.float64),
+            selected,
+            planning_radius_m=self.config.planner.side_grasp_planning_radius_m,
+        )
+        summary = _reach_summary(assessments)
+        logger.info(
+            "可达性预检完成: arms=%s within_bound=%s within_radius=%s "
+            "required_base_advance_m=%s planning_radius_m=%.3f",
+            ",".join(sorted(selected)),
+            summary["any_arm_within_serial_length_upper_bound"],
+            summary["any_arm_within_planning_radius"],
+            summary["required_base_advance_m"],
+            self.config.planner.side_grasp_planning_radius_m,
+        )
+        return summary
+
     def approach_object(
         self,
         target: str | None = None,
@@ -253,12 +335,24 @@ class TraditionalGraspAPI:
             return result
         assert self.context.estimate is not None
         distance = float(np.linalg.norm(self.context.estimate.center_body_m))
-        within_arm_reach = distance <= self.config.planner.max_reach_m
+        # The arms hang from the shoulders, not from the body origin, so the
+        # body-origin distance alone reports targets as reachable that no arm
+        # can serve. Prefer the shoulder-referenced verdict whenever the chain
+        # geometry is available and fall back to the coarse gate otherwise.
+        reach = self.assess_target_reach(self.context.estimate.center_body_m)
+        if reach is None:
+            within_arm_reach = distance <= self.config.planner.max_reach_m
+            required_advance = None
+        else:
+            within_arm_reach = bool(reach["any_arm_within_planning_radius"])
+            required_advance = reach["required_base_advance_m"]
         if within_arm_reach:
             logger.info(
-                "目标位于手臂工作空间: target=%s distance=%.3fm",
+                "目标位于手臂工作空间: target=%s body_origin_distance=%.3fm "
+                "shoulder_referenced=%s",
                 target,
                 distance,
+                reach is not None,
             )
             return {
                 **result,
@@ -268,12 +362,16 @@ class TraditionalGraspAPI:
                 "base_moved": False,
                 "distance_m": distance,
                 "safety_distance_m": safety_distance_m,
+                "reach": reach,
             }
         if not allow_base_motion:
             logger.warning(
-                "目标超出手臂工作空间且未授权底盘运动: distance=%.3fm max=%.3fm",
+                "目标超出手臂工作空间且未授权底盘运动: "
+                "body_origin_distance=%.3fm required_base_advance_m=%s "
+                "shoulder_referenced=%s",
                 distance,
-                self.config.planner.max_reach_m,
+                required_advance,
+                reach is not None,
             )
             return {
                 **result,
@@ -282,7 +380,9 @@ class TraditionalGraspAPI:
                 "staged": False,
                 "base_moved": False,
                 "distance_m": distance,
+                "required_base_advance_m": required_advance,
                 "reason": "base_motion_not_authorized",
+                "reach": reach,
             }
         raise RuntimeError("已授权底盘运动，但当前未注入底盘控制器")
 
@@ -437,6 +537,41 @@ class TraditionalGraspAPI:
             }
         assert self.context.estimate is not None
         candidates = ["left", "right"] if arm_side == "auto" else [arm_side]
+        reach = self.assess_target_reach(
+            self.context.estimate.center_body_m,
+            arms=candidates,
+        )
+        if reach is not None and not reach["any_arm_within_serial_length_upper_bound"]:
+            advance = reach["required_base_advance_m"]
+            logger.warning(
+                "目标超出手臂杆长上界，无需求解即可判定不可达: target=%s "
+                "arms=%s required_base_advance_m=%s",
+                object_prompt,
+                _bounded_repr(reach["arms"]),
+                advance,
+            )
+            return {
+                "success": False,
+                "action": "pick_object",
+                "object_prompt": object_prompt,
+                "requested_arm_side": arm_side,
+                "selected_arm_side": None,
+                "status": "unreachable",
+                "error": (
+                    "target is beyond the arm serial-length bound; "
+                    + (
+                        f"advance the base by {advance:.3f} m"
+                        if advance is not None
+                        else "no forward base travel can bring it into reach"
+                    )
+                ),
+                "verification": None,
+                "execution": None,
+                "bbox": search.get("bbox"),
+                **_empty_pick_artifacts(),
+                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
+                "reach": reach,
+            }
         planned: list[tuple[IKPath, np.ndarray, dict[str, object]]] = []
         errors: dict[str, str] = {}
         for candidate in candidates:
@@ -468,6 +603,15 @@ class TraditionalGraspAPI:
                 errors[candidate] = str(exc)
                 logger.warning("候选手臂规划失败: arm=%s reason=%s", candidate, exc)
         if not planned:
+            advance = reach["required_base_advance_m"] if reach is not None else None
+            if advance:
+                logger.warning(
+                    "全部侧抓候选无解，且目标在实测规划半径之外: target=%s "
+                    "required_base_advance_m=%.3f arms=%s",
+                    object_prompt,
+                    advance,
+                    _bounded_repr(reach["arms"]),
+                )
             return {
                 "success": False,
                 "action": "pick_object",
@@ -475,13 +619,22 @@ class TraditionalGraspAPI:
                 "requested_arm_side": arm_side,
                 "selected_arm_side": None,
                 "status": "planning_failed",
-                "error": "no continuous IK path",
+                "error": (
+                    "no continuous IK path"
+                    + (
+                        f"; target is outside the measured planning radius, "
+                        f"advance the base by {advance:.3f} m"
+                        if advance
+                        else ""
+                    )
+                ),
                 "verification": None,
                 "execution": None,
                 "bbox": search.get("bbox"),
                 **_empty_pick_artifacts(),
                 "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
                 "arm_errors": errors,
+                "reach": reach,
             }
         planned.sort(key=lambda item: item[0].score)
         planned = planned[: self.config.planner.max_ranked_candidates]

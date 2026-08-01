@@ -392,6 +392,11 @@ def build_thor_shadow_api(
         device=torch_device,
         artifact_dir=artifact_dir,
     )
+    project_root = Path(__file__).resolve().parents[2]
+    arm_chain_files = {
+        "left": project_root / "robot/chains/g1_left_arm.chain",
+        "right": project_root / "robot/chains/g1_right_arm.chain",
+    }
     if perception_only:
         ik_solvers = {
             "left": MockIKSolver("left"),
@@ -399,20 +404,19 @@ def build_thor_shadow_api(
         }
         ik_backend = "mock_perception_only"
     else:
-        project_root = Path(__file__).resolve().parents[2]
         left_binary = _resolve(resources.left_ik_binary, project_root)
         right_binary = _resolve(resources.right_ik_binary, project_root)
         ik_solvers = {
             "left": TracIKProcess(
                 left_binary,
-                project_root / "robot/chains/g1_left_arm.chain",
+                arm_chain_files["left"],
                 "left",
                 config.planner.ik_timeout_s,
                 config.planner.ik_tolerance,
             ),
             "right": TracIKProcess(
                 right_binary,
-                project_root / "robot/chains/g1_right_arm.chain",
+                arm_chain_files["right"],
                 "right",
                 config.planner.ik_timeout_s,
                 config.planner.ik_tolerance,
@@ -436,6 +440,7 @@ def build_thor_shadow_api(
         executor=planning_executor or MockArmExecutor(contact_detected=False),
         camera_to_body=camera_to_body,
         collision_checker=None,
+        arm_chain_files=arm_chain_files,
     )
 
 

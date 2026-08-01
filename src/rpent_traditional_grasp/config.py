@@ -77,6 +77,12 @@ class PlannerConfig:
     fk_rotation_tolerance_rad: float = 0.08
     tip_offset_m: float = 0.150215608966
     max_reach_m: float = 0.78
+    # Measured shoulder-to-target radius inside which the bounded side-grasp
+    # planner still returns candidates. The rigorous serial-length bound is
+    # 0.5606 m, but with a zero-joint seed and the target ~0.30 m below the
+    # shoulder the planner already fails at 0.5197 m and first succeeds at
+    # 0.5118 m, so 0.50 m keeps a small margin. Advice only; never a rejection.
+    side_grasp_planning_radius_m: float = 0.50
     preferred_arm: str = "auto"
     side_grasp_pitch_degrees: tuple[float, ...] = (
         10.0,

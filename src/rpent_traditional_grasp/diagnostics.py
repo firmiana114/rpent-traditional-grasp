@@ -29,11 +29,100 @@ class ArmChainGeometry:
     serial_length_upper_bound_m: float
 
 
+@dataclass(frozen=True)
+class ArmReachAssessment:
+    """No-motion verdict on whether one arm can be planned to a target."""
+
+    arm: str
+    shoulder_distance_m: float
+    serial_length_upper_bound_m: float
+    margin_m: float
+    within_serial_length_upper_bound: bool
+    within_planning_radius: bool
+    required_base_advance_m: float | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "arm": self.arm,
+            "shoulder_distance_m": self.shoulder_distance_m,
+            "serial_length_upper_bound_m": self.serial_length_upper_bound_m,
+            "margin_m": self.margin_m,
+            "within_serial_length_upper_bound": (
+                self.within_serial_length_upper_bound
+            ),
+            "within_planning_radius": self.within_planning_radius,
+            "required_base_advance_m": self.required_base_advance_m,
+        }
+
+
 class BoundedIKSolver(IKSolver, Protocol):
     """IK solver exposing the diagnostic-only position solve."""
 
     def solve_position_only(self, seed: np.ndarray, target: Pose) -> np.ndarray:
         """Solve XYZ while ignoring rotation."""
+
+
+def required_base_advance_m(
+    target_body_xyz_m: np.ndarray,
+    geometry: ArmChainGeometry,
+    radius_m: float,
+) -> float | None:
+    """Return the forward base travel that pulls the target inside ``radius_m``.
+
+    The base drives along body ``+x``, so advancing by ``d`` moves the target to
+    ``target - d * x_hat`` in the body frame. Returns ``0.0`` when the target is
+    already inside the radius and ``None`` when no forward travel can help,
+    which happens when the lateral and vertical offsets alone exceed the radius.
+    """
+    target = np.asarray(target_body_xyz_m, dtype=np.float64)
+    offset = target - geometry.shoulder_body_xyz_m
+    if float(np.linalg.norm(offset)) <= radius_m:
+        return 0.0
+    off_axis_squared = float(offset[1] ** 2 + offset[2] ** 2)
+    remaining = radius_m**2 - off_axis_squared
+    if remaining <= 0.0:
+        return None
+    advance = float(offset[0]) - float(np.sqrt(remaining))
+    return advance if advance > 0.0 else None
+
+
+def assess_arm_reach(
+    target_body_xyz_m: np.ndarray,
+    geometries: dict[str, ArmChainGeometry],
+    *,
+    planning_radius_m: float,
+) -> dict[str, ArmReachAssessment]:
+    """Judge every supplied arm against the rigorous bound and the planning radius.
+
+    ``serial_length_upper_bound_m`` is the sum of the remaining link lengths, so a
+    negative margin is a proof of unreachability. ``planning_radius_m`` is the
+    much tighter measured radius inside which the constrained side-grasp planner
+    actually returns candidates; it depends on the seed pose and on how far the
+    target sits below the shoulder, so it guides advice instead of rejecting.
+    """
+    target = np.asarray(target_body_xyz_m, dtype=np.float64)
+    if target.shape != (3,) or not np.all(np.isfinite(target)):
+        raise ValueError("目标机身坐标必须是三个有限数值")
+    if planning_radius_m <= 0.0:
+        raise ValueError("planning_radius_m 必须为正")
+    assessments: dict[str, ArmReachAssessment] = {}
+    for arm, geometry in geometries.items():
+        reach = _geometric_reachability(target, geometry)
+        distance = float(reach["shoulder_distance_m"])
+        assessments[arm] = ArmReachAssessment(
+            arm=arm,
+            shoulder_distance_m=distance,
+            serial_length_upper_bound_m=geometry.serial_length_upper_bound_m,
+            margin_m=float(reach["margin_m"]),
+            within_serial_length_upper_bound=bool(
+                reach["within_serial_length_upper_bound"]
+            ),
+            within_planning_radius=distance <= planning_radius_m,
+            required_base_advance_m=required_base_advance_m(
+                target, geometry, planning_radius_m
+            ),
+        )
+    return assessments
 
 
 def diagnose_ik_reachability(
