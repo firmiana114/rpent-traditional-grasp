@@ -118,6 +118,18 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   是当前链路最大误差源。
 - 生产 `pick_object` 路径没有可达性预检：够不着时报 `no continuous IK
   path`，不提示需要底盘逼近；几何可达性检查目前只存在于 `diagnostics.py`。
+- **CREStereo 一直跑在 CPU 上**：影子入口使用的 `yolo_world` conda 环境装的是
+  纯 CPU 版 onnxruntime（仅 Azure/CPU provider），`object_grab.py` 请求的
+  TensorRT/CUDA 被静默回退。同机 `abot-claw` 环境有 TensorRT/CUDA provider，
+  实测同一模型同一对图：CPU 稳态 `3579 ms`，GPU 稳态 `49 ms`，相差 73 倍。
+  全链路稳态由 `3747 ms` 降到 `217 ms`，无任何精度代价。
+- 经典算法替换同机实测（Thor，稳态中位）：SGBM 深度 `24 ms`、GrabCut 分割
+  `292 ms`、YOLO-World（TensorRT）`8 ms`、SAM2 `160 ms`。GrabCut 比 SAM2 慢
+  1.8 倍；YOLO-World 无经典替代（GrabCut 需要外部输入框，不能检测）。
+  精度：场景一掩码 IoU 0.929，瓶心偏移 GrabCut 2.4 mm、SGBM 6.2 mm、两者
+  9.1 mm；SGBM 掩码内深度覆盖 0.907 且 MAD 14.3 mm（CREStereo 1.000/9.9 mm）。
+  场景二（现场历史图）SGBM 直接失败：商标带深度 MAD `76.6 mm` 超 25 mm 门限
+  被拒，CREStereo 同图 MAD 仅 5.5 mm。SGBM 不是精度略差而是不可靠。
 - 外部模型体积：CREStereo ONNX 25 MB、YOLO-World `.pt` 140 MB、
   SAM2 checkpoint 176 MB，合计约 341 MB，具备本机部署条件；`.engine`
   为 TensorRT 产物仅限 NVIDIA，本机须走 `.pt`。
@@ -129,7 +141,10 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   标定或多位置人工真值验收，通过前 `camera_to_body_validated` 保持 false。
 - 新双目标定已用缓存图在 Thor 真实模型链路回归；尚未做在线相机采集回归。
 - air-thor 经常离线，两端同步性差；计划把 CREStereo/YOLO-World/SAM2 及其
-  依赖部署到本机，使影子链路不依赖服务器。
+  依赖部署到本机，使影子链路不依赖服务器。本机须走 `.pt`（`.engine` 仅限
+  NVIDIA），且需装 onnxruntime/torch/ultralytics。
+- 待办：给影子入口换用带 GPU provider 的 onnxruntime（或改指 `abot-claw`
+  环境），把 CREStereo 从 3579 ms 降到 49 ms；这是当前性价比最高的一项。
 - 瓶体商标区域在反光、透明瓶、遮挡和低纹理场景的深度成功率尚未实测。
 - 环境障碍物碰撞仍因缺少场景模型未实现；实机前需人工清场和急停。
 - Dex1-1 驱动量到毫米开口、接触阈值、TCP 六自由度外参未做真机标定。
