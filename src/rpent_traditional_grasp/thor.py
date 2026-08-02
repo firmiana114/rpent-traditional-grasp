@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from rpent_traditional_grasp.api import TraditionalGraspAPI
+from rpent_traditional_grasp.collision import build_collision_checker
 from rpent_traditional_grasp.config import TraditionalGraspConfig
 from rpent_traditional_grasp.execution import ArmExecutor, MockArmExecutor
 from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
@@ -431,15 +432,24 @@ def build_thor_shadow_api(
         host,
         port,
     )
+    executor = planning_executor or MockArmExecutor(contact_detected=False)
+    # Rank against the same checker the parent uses to veto execution, so a
+    # colliding candidate never reaches the top of the list.
+    collision_checker = build_collision_checker(
+        config.resources,
+        lambda: np.concatenate(
+            [executor.current_joints("left"), executor.current_joints("right")]
+        ),
+    )
     return TraditionalGraspAPI(
         config=config,
         stereo_source=stereo_source,
         detector=detector,
         segmenter=segmenter,
         ik_solvers=ik_solvers,
-        executor=planning_executor or MockArmExecutor(contact_detected=False),
+        executor=executor,
         camera_to_body=camera_to_body,
-        collision_checker=None,
+        collision_checker=collision_checker,
         arm_chain_files=arm_chain_files,
     )
 

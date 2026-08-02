@@ -12,7 +12,11 @@
     "gripper_specification": "config/g1d_dex1_1_nominal.json",
     "robot_urdf": "/home/aiot/fuchengjia/Projects/xr_teleoperate/assets/g1/g1_body29_hand14.urdf",
     "left_ik_binary": "native/build/g1_trac_ik",
-    "right_ik_binary": "native/build/g1_trac_ik"
+    "right_ik_binary": "native/build/g1_trac_ik",
+    "collision_checker_python": "/home/aiot/miniconda3/envs/rpent/bin/python",
+    "collision_checker_repo": "/home/aiot/wuxi/RPent",
+    "collision_checker_module": "robots.air_robot.collision",
+    "collision_checker_class": "PinocchioSelfCollisionChecker"
   },
   "perception": {
     "target_prompts": [

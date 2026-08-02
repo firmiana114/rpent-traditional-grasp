@@ -174,6 +174,12 @@ class TraditionalGraspAPI:
                     close()
                 except Exception:
                     logger.exception("关闭 IK 求解器失败: arm=%s", arm)
+        close_checker = getattr(self.collision_checker, "close", None)
+        if close_checker is not None:
+            try:
+                close_checker()
+            except Exception:
+                logger.exception("关闭自碰撞检查器失败")
 
     def __enter__(self) -> TraditionalGraspAPI:
         return self
@@ -597,6 +603,7 @@ class TraditionalGraspAPI:
                 }
         planned: list[tuple[IKPath, np.ndarray, dict[str, object]]] = []
         errors: dict[str, str] = {}
+        collision_rejected: dict[str, str] = {}
         for candidate in candidates:
             try:
                 seed = self.executor.current_joints(candidate)
@@ -614,10 +621,14 @@ class TraditionalGraspAPI:
                             "collision_check_detail": detail,
                         }
                         if not safe:
+                            orientation = str(
+                                metadata.get("orientation_candidate", "")
+                            )
+                            collision_rejected[f"{candidate}:{orientation}"] = detail
                             logger.info(
                                 "侧抓候选碰撞拒绝: arm=%s candidate=%s detail=%s",
                                 candidate,
-                                metadata.get("orientation_candidate"),
+                                orientation,
                                 detail,
                             )
                             continue
@@ -635,6 +646,22 @@ class TraditionalGraspAPI:
                     advance,
                     _bounded_repr(reach["arms"]),
                 )
+            # A batch killed by self-collision is a different problem from an
+            # unreachable target, and pointing at the wrong one wasted a field
+            # run before; keep the two causes distinguishable in the error.
+            if collision_rejected:
+                logger.warning(
+                    "全部侧抓候选被自碰撞预筛拒绝: target=%s rejected=%d detail=%s",
+                    object_prompt,
+                    len(collision_rejected),
+                    _bounded_repr(collision_rejected),
+                )
+                reason = (
+                    f"every side-grasp candidate self-collides "
+                    f"({len(collision_rejected)} rejected)"
+                )
+            else:
+                reason = "no continuous IK path"
             return {
                 "success": False,
                 "action": "pick_object",
@@ -643,7 +670,7 @@ class TraditionalGraspAPI:
                 "selected_arm_side": None,
                 "status": "planning_failed",
                 "error": (
-                    "no continuous IK path"
+                    reason
                     + (
                         f"; target is outside the measured planning radius, "
                         f"advance the base by {advance:.3f} m"
@@ -657,6 +684,7 @@ class TraditionalGraspAPI:
                 **_empty_pick_artifacts(),
                 "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
                 "arm_errors": errors,
+                "collision_rejected": collision_rejected,
                 "reach": reach,
             }
         planned.sort(key=lambda item: item[0].score)

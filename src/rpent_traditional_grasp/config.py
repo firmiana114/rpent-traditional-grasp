@@ -37,6 +37,15 @@ class ResourceConfig:
     robot_urdf: str = "robot/g1_body29_hand14.urdf"
     left_ik_binary: str = "native/build/g1_trac_ik"
     right_ik_binary: str = "native/build/g1_trac_ik"
+    # Self-collision reuses the parent project's authoritative pinocchio/hpp-fcl
+    # checker so ranking agrees with the gate that actually vetoes execution.
+    # It lives in a different interpreter, hence a subprocess and its own paths.
+    # Empty values disable the pre-filter; ranking then stays collision-blind.
+    collision_checker_python: str = ""
+    collision_checker_repo: str = ""
+    collision_checker_module: str = "robots.air_robot.collision"
+    collision_checker_class: str = "PinocchioSelfCollisionChecker"
+    collision_urdf: str = ""
 
 
 @dataclass(slots=True)
@@ -206,6 +215,9 @@ class TraditionalGraspConfig:
             "robot_urdf": os.getenv("RPENT_G1_URDF"),
             "left_ik_binary": os.getenv("RPENT_LEFT_TRAC_IK_BINARY"),
             "right_ik_binary": os.getenv("RPENT_RIGHT_TRAC_IK_BINARY"),
+            "collision_checker_python": os.getenv("RPENT_COLLISION_PYTHON"),
+            "collision_checker_repo": os.getenv("RPENT_COLLISION_REPO"),
+            "collision_urdf": os.getenv("RPENT_COLLISION_URDF"),
         }
         applied: list[str] = []
         for name, value in overrides.items():
