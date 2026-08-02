@@ -85,9 +85,9 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
 ## 未确认、阻塞问题与下一步
 
 - **三次运行的 pick 后端归属（命名极易混淆，务必先看这条）**：父项目 `wuxi_adapter.py:421`
-  `_pick_object_legacy` 的错误串字面写着 `traditional grasp detector did not return a grasp
-  message`，那是 **Contact-GraspNet 时代的旧叫法**，比本项目还早；两次运行的总结 JSON 里 LLM 又
-  自己写了 `"backend": "air_robot traditional method stack"`。判别只能靠下表这些**唯一串**：
+  `_pick_object_legacy` 的错误串字面写着 `traditional grasp detector did not return a grasp message`，
+  那是 **Contact-GraspNet 时代的旧叫法**，比本项目还早；总结 JSON 里 LLM 又自己写了
+  `"backend": "air_robot traditional method stack"`。判别只能靠下表这些**唯一串**：
 
   | 运行 | `did not return a grasp message`(legacy 独有) | `contact_graspnet` | `required_base_advance_m`(本项目独有) | 收到 `plan_pick` | 归属 |
   |---|---|---|---|---|---|
@@ -95,14 +95,13 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
   | 11:47 | 2 | 0 | 0 | 0 | legacy，失败 |
   | 11:50 | 2 | 2 | 0 | 0 | legacy，成功 |
 
-- **父项目从不记录当前 pick 后端模式**（`run.log`、`observe_scene` 的 `capabilities`/`roots` 里都
-  没有），这是上述归属只能靠反推错误串的根本原因，也导致测试人员与日志证据出现分歧（测试人员
-  认为 11:47 跑的是本项目，日志显示是 legacy）。**建议父项目在 `wuxi_adapter._pick_backend_mode()`
-  落一条 INFO，并把 mode 加进 `observe_scene` 输出。** 机制上无歧义：默认值是 `traditional-live`，
-  要进 legacy **必须显式 export**；`pick_object` 的分发是 `if mode != "legacy"` 二选一，
-  `traditional_grasp_backend.py` 里**不含任何回退到 legacy 的路径**；该错误串全仓库仅
-  `wuxi_adapter.py:421` 一处。最可能的现场原因是 shell 里残留了 `export
-  AIR_ROBOT_PICK_BACKEND=legacy`（未见于任何脚本或 `.bashrc`，只能是手工导出且跨运行残留）。
+- **父项目从不记录当前 pick 后端模式**（`run.log`、`observe_scene` 的 `capabilities`/`roots` 里都没有），
+  这是归属只能靠反推错误串的根本原因，也导致测试人员与日志证据分歧（测试人员认为 11:47 跑的是本
+  项目）。**建议父项目在 `wuxi_adapter._pick_backend_mode()` 落一条 INFO，并把 mode 加进
+  `observe_scene` 输出。** 机制上无歧义：默认值是 `traditional-live`，进 legacy **必须显式 export**；
+  分发是 `if mode != "legacy"` 二选一，`traditional_grasp_backend.py` **不含任何回退 legacy 的路径**；
+  错误串全仓库仅 `wuxi_adapter.py:421` 一处；`AIR_ROBOT_PICK_BACKEND` 未出现在任何脚本或
+  `.bashrc`，故最可能是 shell 里手工 export 后跨运行残留。
 - **11:47/11:50 对照，已同步到本地 `logs/`。要点：这两次都不是本项目跑的 pick**，`pick_object`
   全程走旧 Contact-GraspNet；本项目只承担 `search_object`（11:47 两次、11:50 七次）。**因此现场
   尚未做过同场景的跨方法 A/B**；要做需在当前摆位下用 `AIR_ROBOT_PICK_BACKEND=traditional-live`
@@ -111,30 +110,28 @@ PYTHONPATH=src python scripts/diagnose_ik_reachability.py --help
     同样成功**——预检 `within_radius=True`、`required_base_advance=0`，TCP `[0.4778,0.0666,0.0564]`、
     左肩距 **0.512 m**，24 个候选中 `pitch_+10/+20/+30` **三个有解**，产出 38 点路径，只停在
     `motion_gated`。11:03 失败那次左肩距 0.5422 m，与 11:50 的 0.5121 m **只差 30 mm**，恰好跨界。
-  - **姿态网格存在明显不对称**：只有**正俯角**（从略上方切入）有解，全部负俯角与全部偏航无解，
-    24 个候选里有一半是无效开销，网格没有对准解实际存在的方向。
+  - **姿态网格明显不对称**：只有**正俯角**（从略上方切入）有解，负俯角与偏航全灭，一半候选是无效开销。
   - **底盘实际上没动**：11:50 里 3 次 0.1 m 前进原语都报成功，但前后两次 `search_object` 测得的瓶心
     只变了约 1.5–6 mm，`approach_object` 最终报 `max_iterations reached`，故成功**不能**归因于底盘
     前移。（该轮未记录底盘里程，此判断基于目标距离而非位姿读数。）
-  - **11:47 与 11:50 的真实差别是"LLM 有没有让本项目的检测器跑"。** Contact-GraspNet 自带检测器在
-    两次的首次 `pick_object`（不带 bbox）都返回 `detect_failed`。11:50 的 LLM 随后调了**不带 bbox**
-    的 `search_object`，本项目 YOLO-World 每次都正确定位（置信度 0.85–0.88），**最终促成抓取成功的
-    bbox `[203,194,252,299]` 正是本项目给出的**；11:47 的 LLM 则从头到尾只喂自己目测的框。
+  - **11:47 与 11:50 的真实差别是"LLM 有没有让本项目的检测器跑"。** Contact-GraspNet 自带检测器在两次
+    的首次 `pick_object`（不带 bbox）都返回 `detect_failed`。11:50 的 LLM 随后调了**不带 bbox** 的
+    `search_object`，本项目 YOLO-World 每次都正确定位（置信度 0.85–0.88），**最终促成抓取成功的 bbox
+    `[203,194,252,299]` 正是本项目给出的**；11:47 的 LLM 则从头到尾只喂自己目测的框。
   - **11:47 崩溃链条**：LLM 目测的 `[268,204,312,294]` 落在**空台面**上（已叠图确认），几何门禁按设计
     拒绝（`瓶径越界 0.1608m`、第二次 `商标带深度离散过大 mad=0.0284m`），但本项目是**抛异常**而非
     回退，`approach_object` 连带失败，重试门禁锁死。**显式 bbox 被拒时应回退到自带检测器**。
-  - 与 Contact-GraspNet 的结构差异：本项目要求 TCP **精确落在瓶心**、姿态取自**固定 ±30° 网格**，
-    24 个全无解即整体失败；对方从 3267 点点云**生成连续候选**并排序（本次取 `candidate_id=2`）。
+  - 与 Contact-GraspNet 的结构差异：本项目要求 TCP **精确落在瓶心**、姿态取自**固定 ±30° 网格**，24 个
+    全无解即整体失败；对方从 3267 点点云**生成连续候选**并排序（本次取 `candidate_id=2`）。
   - **三条改进（按价值排序）**：① 显式 bbox 被几何门禁拒绝时回退到自带检测器；② 允许 TCP 落在瓶心
-    **之前**（增加抓取深度参数）——夹爪只需包住瓶子，回收 10–20 mm 就等量延长可达距离，足以覆盖
-    11:03 差的那 2 mm；③ 姿态网格改为向有解一侧加密或从可行域采样。
-
-- **2026-08-02 11:03 现场运行（旧标定生效后的第一次，仍失败；是三次里唯一由本项目承担 pick 的）**，
-  已同步到 `logs/20260802-11:03:28_air_robot_task_s0`（`logs/` 已 gitignore）。场景已换（瓶子放在
-  白色矮柜台面上，与 0801 那组图不是同一现场）：
-  - 瓶心 `[0.5093,0.0856,0.0517]`、深度 `0.5658 m`、瓶径 `0.0587 m`、MAD 4.1 mm；本机复现与 Thor
-    差 **< 0.3 mm**。左肩距 `0.5422 m`：在杆长上界内（0.5606），只比实测规划半径 0.540 超
-    **2.2 mm**。种子关节角 14 维全部 `|q| < 0.015 rad`，手臂在零位。
+    **之前**（增加抓取深度参数）——夹爪只需包住瓶子，回收 10–20 mm 就等量延长可达距离；③ 姿态网格
+    改为向有解一侧加密或从可行域采样。
+- **2026-08-02 11:03 现场运行（旧标定生效后的第一次，仍失败；三次里唯一由本项目承担 pick 的）**，
+  已同步到 `logs/20260802-11:03:28_air_robot_task_s0`（`logs/` 已 gitignore）。场景已换（瓶子放在白色
+  矮柜台面上，与 0801 那组图不是同一现场）：
+  - 瓶心 `[0.5093,0.0856,0.0517]`、深度 `0.5658 m`、瓶径 `0.0587 m`、MAD 4.1 mm；本机复现与 Thor 差
+    **< 0.3 mm**。左肩距 `0.5422 m`：在杆长上界内（0.5606），只比实测规划半径 0.540 超 **2.2 mm**。
+    种子关节角 14 维全部 `|q| < 0.015 rad`，手臂在零位。
   - **左右臂 24 个姿态候选全部 `no IK solution`**——失败在目标位姿本身，不是连续路径桥接。
   - **瓶径真值存疑，暂缓**（用户 2026-08-02 决定）：现场量得**瓶底** 55.0 mm，且称昨今为同一瓶（与此前"62 mm"冲突）。本项目估计的是**中部商标带**（掩码中部 38 px、瓶底 33 px，下收 13%），用同一深度图量瓶底得 57.9 mm。**要定案需现场补量瓶身最宽处直径与瓶高**；在此之前不要用瓶径反推深度尺度。
 - **0801 现场运行**（`logs/20260801-16:48:44_air_robot_task_s0`）：**旧标定**，`depth=0.607m diameter=0.062m`；底盘全程未动（位移 8.5e-06 m）。两次采集相隔 30 s 深度由 0.607 变 0.527 m 而机器人没动，是画面里的人把桌子推近了约 80 mm。
