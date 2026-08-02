@@ -71,32 +71,43 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 
 ## 未确认、阻塞问题与下一步
 
-- **2026-08-02 14:18(本项目,失败) / 14:21(legacy,成功) 是第一次同场景跨方法 A/B，两者相隔 3 分钟、
-  任务同为"不移动自身"、底盘均未动。失败模式已从"够不着"变成"过不了权威校验"。**
-  - 本项目这次**规划是成功的**：`depth=0.573m diameter=0.062m`，可达性预检 `within_radius=True`、
-    `required_base_advance=0`，产出 3 个 ranked 候选（`pitch_+30deg` / `pitch_+20deg_yaw_-10deg` /
-    `pitch_+20deg`，按 score 0.461/0.572/0.642 升序）。死在父项目 `validate_traditional_grasp_path`：
-    `collision_failed / no ranked side-grasp candidate passed authoritative validation`。
-  - **legacy 成功那次 `validate_traditional_grasp_path` 调用 0 次**——它**根本不过这道校验**，也没有
-    计划签名、TTL、种子漂移检查。所以这不是抓取质量之争，是**我们多了一整套安全门而对方没有**。
-    对方自身拒了 4 个点云候选后执行第 5 个（`candidate_id=4`）。
-  - **在 thor 上用父项目自己的检查器逐点复验了这三条轨迹**（只读）：`pitch_+30deg` **39 点里 17 点
-    碰撞**、`pitch_+20deg` 34 点里 13 点碰撞，都是 `torso_link_0 <-> left_shoulder_yaw_link_0`；
-    **`pitch_+20deg_yaw_-10deg` 34 点零碰撞**。碰撞点集中在**开头的关节空间桥接段与结尾的后撤段**
-    （肩 roll −0.19..−0.06），**不在抓取位姿本身**。检查器在零位报 0 碰撞，故**不是坏掉的门**。
-  - **缺陷一（已修，见下）**：本项目排序原先对自碰撞完全无感（`collision_check_detail=
-    "collision checker not configured"`，只按关节行程排序），把真会撞的候选排在第一。
-  - **缺陷二：真实拒绝原因是种子过期，不是碰撞。** 三个候选的逐条结果**一直保存在
-    `failed_trace_air_robot_task_s0.jsonl` 的 `candidate_validations` 里**（此前误称"无从查证"，
-    是我只搜了 transcript 没搜 failed_trace）：rank1 自碰撞，**rank2/rank3 都是
-    `plan seed is stale: max_drift=0.724027 / 0.672471 tolerance=0.050000`**（约 41°/38°）。
-    **注意：所以就算预筛把干净的候选排到第一，这次仍会被拦下。**
-  - **种子漂移的成因推测（未证实）**：三个候选签的 `seed_q` 相同且≈0，运行前后读到的 `current_q`
-    也≈0，漂移只出现在 `collision_checker_init_start`→`init_done` 那 **4 秒**窗口内，且两次读数还在
-    收敛（0.724→0.672）。父项目在**首次校验时才惰性构建** pinocchio 模型与 1257 个碰撞对，怀疑长时间
-    占用 GIL 饿死了 `prepare` 启动的 **30 Hz 重力补偿保活线程**，手臂随之下垂。验证方向：把检查器改为
-    服务启动时一次性初始化（或移出该进程），再看漂移是否消失。已写进父项目交接报告。
-- **自碰撞预筛已落地**（2026-08-02，用户决定复用父项目检查器）。`collision.py` 的 `SubprocessSelfCollisionChecker` + `scripts/collision_worker.py` 以**持久子进程**复用父项目的 `PinocchioSelfCollisionChecker`（与 `ik.py` 的 TRAC-IK 同一套模式）；**规划服务所在解释器没有 pinocchio，只有父项目的 `rpent` 环境有**，故必须跨进程。复用而非自研是关键——预筛必须与真正否决执行的那道门判定一致。`thor.py` 构建影子栈时装配，**未配置或启动失败只落 WARNING 并退化为无预筛**，规划不中断（父项目仍有权威校验）。`api.py` 现区分"全部候选自碰撞"与"无连续逆解"，并返回 `collision_rejected` 明细。**thor 上已实测**：预筛拿到的 `urdf_sha256=8bbf0066…` 与现场那道权威门**逐字一致**（同 1257 个碰撞对），三条轨迹判定也一致——`pitch_+30deg` 撞（样本 4/86）、`pitch_+20deg` 撞（2/81）、`pitch_+20deg_yaw_-10deg` 干净。样本数远大于航点数，因为父项目按 `sample_step_rad=0.05` 在航点之间插值，**这正是必须复用而非自己实现的原因**。预期 14:18 那次会把两条碰撞候选在排序阶段丢掉；但**缺陷二仍可能照样拦下干净的那条**，尚未现场复测。
+- **2026-08-02 15:28/15:35 首次真机执行：手臂动了，但空抓并把瓶子推开。** 夹爪自报
+  `gripper reached empty-close position q=0.064 without sustained contact`——是**合到底都没碰到**，
+  不是抓到又滑掉；`_require_success` 随即中止，抬升与后撤都没执行，`verify_grasp` 如实报 false。
+  **安全链正确。** 现场目视：**两次夹爪都停在瓶子右侧**（待确认是机器人自身的右还是拍摄者视角的右）。
+  - **自碰撞预筛按预期奏效**：两次分别丢弃 25 / 24 个碰撞候选，`rank=1` 一次通过，
+    `max_seed_drift_rad` 只有 **0.00036 / 0.00098 rad**——种子漂移问题被绕开，印证了此前的推断
+    （漂移只在第二、三次校验才咬到，而预筛让校验只需一次）。
+  - **"阶跃参考"假说：规划侧不成立，下发侧待查。** 已画出执行轨迹（33 点）：相邻点关节位移
+    0.068–0.135 rad 连续无跳变，TCP 路径规矩（接近段直线、抬升段 x/y 完全不动）。逆解精确——FK
+    反算抓取点与规划目标**逐位相同**。但父项目 `arm_service.py:528` 是
+    `for point: move_joints(duration=0.12)`，0.135 rad / 0.12 s = **1.13 rad/s**；若 CapX 的
+    `move_joints` 不做插值，控制器就会看到台阶。**`/home/aiot/cap-x` 尚未读，待确认。**
+- **经验抓取偏置已接入（2026-08-02，用户决定先试）**：`left/right_empirical_grasp_offset_m`，
+  左臂 `[+0.0146,+0.0874,+0.0013]` m、右臂 `[-0.0047,+0.0388,+0.0301]` m，在与上游
+  `build_horizontal_contact_pose` **完全相同的接触系**（x=肩→瓶水平方向，y=其左，z=上）中施加。
+  换算：该标定接触系原点在瓶心后 0.1034 m，其 translation 是 `ik_ee(wrist+0.05)` 在该系中的位置；
+  本项目当前把等效点放在瓶心后 0.100216 m，修正量即二者之差。**thor 实测**：15:35 那帧抓取点由
+  `[0.4414,0.0740,0.0524]` 移到 `[0.4612,0.1604,0.0537]`（body 位移 `[+19.8,+86.4,+1.3]` mm），
+  左肩距 0.4798→0.5004 m，仍在 0.540 内。
+  - **这不是 TCP 标定，不得据此翻转 `gripper_tcp_calibration_validated`。** 已核实
+    `calibrate_tcp_from_vla.py:132-142`，其"物体中心真值"来自**同一条被质疑的双目链路**
+    （同一个 CREStereo、同一套相机→机身外参），因此它把 TCP 误差与感知误差**绑在一起、无法分离**。
+    左右臂侧向差 87 vs 39 mm——镜像对称的同款硬件不可能差 48 mm，**这个不对称本身就说明它测的
+    不是几何**。残差均值 19–20 mm、样本仅 5–8 个。
+  - **风险**：很可能在当前摆位能抓到，但换位置会失效，且真正的标定问题被掩盖。故做成独立可关闭项、
+    全零即关闭、不并入 `tip_offset_m`，施加时落 WARNING。
+  - **仍应做的**：用尺直接量夹爪两指内表面中点相对腕部的实际位置（轴向+侧向）。这是唯一**不经过
+    感知链**、能把 TCP 误差单独摘出来的办法；若尺子证明 TCP 本来就对，则 87 mm 属感知误差，
+    该去修相机外参而不是补 TCP。
+
+- **2026-08-02 14:18(本项目) / 14:21(legacy) 同场景 A/B**：本项目规划成功但三个候选全被父项目
+  `validate_traditional_grasp_path` 拒绝——rank1 自碰撞（已在 thor 用父项目自己的检查器逐点复验：
+  39 点里 17 点撞 `torso_link_0 <-> left_shoulder_yaw_link_0`，集中在关节空间桥接段与后撤段，
+  **不在抓取位姿本身**），rank2/rank3 是 `plan seed is stale`（0.724/0.672 rad）。**legacy 成功那次
+  `validate_traditional_grasp_path` 调用 0 次**——它根本不过这道校验，也没有计划签名、TTL、种子漂移
+  检查。所以那不是抓取质量之争，是**我们多了一整套安全门**。两个缺陷此后都已处理：自碰撞预筛（见
+  "当前状态"）与种子漂移（预筛使校验只需一次即绕开）。
 - **pick 后端归属判别（命名极易混淆，务必先看这条）**：父项目 `wuxi_adapter.py:421` `_pick_object_legacy`
   的错误串字面写着 `traditional grasp detector did not return a grasp message`，那是 **Contact-GraspNet
   时代的旧叫法**，比本项目还早；总结 JSON 里 LLM 又自己写 `"backend": "air_robot traditional method
@@ -136,7 +147,7 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 - **父项目 `traditional_grasp_backend.py` 的 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 默认值仍是 `yolo_world`**，2026-08-02 现场日志已实测证实：生产链路仍跑 **CPU 版 CREStereo**，单帧 4.3–4.9 s。子项目的自判逻辑正常工作（正确落 WARNING），缺的是父项目改默认解释器，需父项目单独提交。
 - 仿真侧曾把瓶底埋进桌面、又曾让瓶子走出桌沿，均已修（`--rest-bottle-on-table` 同时调高度与水平位置，出生点随桌走，穿模硬拦截）。Oracle 真值输入下瓶心 z 仍偏高 23–30 mm。**仿真 yaml 仍内联新标定，与子项目已不一致**；仿真仓库另有 12 个提交未推送。
 - **底盘不移动是硬约束**（用户 2026-08-02 明确）：遥操就是在底盘与躯干都不动、只用手臂的条件下抓到的，故 `required_base_advance_m` 只能作为"差多远"的诊断量，不能作为方案。尚未做在线相机采集回归；商标区域在反光、透明瓶、遮挡、低纹理下的深度成功率未实测。环境障碍物碰撞因缺场景模型未实现，实机前需清场和急停；Dex1-1 驱动量到毫米开口、接触阈值、TCP 六自由度外参也未做真机标定。`visualization.py` 与三个对比脚本为另一会话的未提交工作，未经本轮验证。
-- 下一步（按价值）：**① 父项目查种子漂移**（把碰撞检查器改为服务启动时一次性初始化，验证 0.72 rad 漂移是否消失）→ **② 现场复测自碰撞预筛**（跑 `AIR_ROBOT_PICK_BACKEND=traditional-live`）→ ③ 显式 bbox 被拒时回退自带检测器 → ④ 加抓取深度参数让 TCP 可落在瓶心之前 → ⑤ 姿态网格向有解一侧加密 → ⑥ 现场补量瓶身最宽处直径与瓶高 → ⑦ 多姿态手眼标定 → ⑧ 父项目改 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 上 GPU → ⑨ 清场急停后限速小步真机验证。
+- 下一步（按价值）：**① 带经验偏置跑一次实机**（本轮已部署，验证是否命中瓶心）→ **② 用尺实测夹爪几何**（唯一能分离 TCP 误差与感知误差的手段，决定偏置是留是撤）→ **③ 读 CapX `move_joints` 确认是否插值**（阶跃参考）→ ③ 显式 bbox 被拒时回退自带检测器 → ④ 加抓取深度参数让 TCP 可落在瓶心之前 → ⑤ 姿态网格向有解一侧加密 → ⑥ 现场补量瓶身最宽处直径与瓶高 → ⑦ 多姿态手眼标定 → ⑧ 父项目改 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 上 GPU → ⑨ 清场急停后限速小步真机验证。
 
 ## 注意事项
 
