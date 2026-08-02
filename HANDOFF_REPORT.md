@@ -16,7 +16,7 @@
 
 ## 主要模块与目录
 
-- `src/rpent_traditional_grasp/`：`api.py` 四接口编排与安全门禁；`config.py`/`gripper.py` 配置与 Dex1-1 规格校验；`stereo.py` 标定/矫正/CREStereo 适配与执行提供者诊断；`perception.py` YOLO-World 检测与 SAM2 框提示分割；`geometry.py` 商标带鲁棒深度与瓶心估计；`planning.py` ±30° 组合侧抓与插值；`ik.py` 持久 TRAC-IK 与 FK 残差；`diagnostics.py` 无运动可达性诊断；`execution.py` 碰撞/执行器协议与接触证据；`thor.py` 相机适配、注入式 CapX 与感知设备选择；`xyz.py` 图片到 TCP 验收；`visualization.py` 双后端 TCP 对比。
+- `src/rpent_traditional_grasp/`：`api.py` 四接口编排与安全门禁；`config.py`/`gripper.py` 配置与 Dex1-1 规格校验；`stereo.py` 标定/矫正/CREStereo 适配与执行提供者诊断；`perception.py` YOLO-World 检测与 SAM2 框提示分割；`geometry.py` 商标带鲁棒深度与瓶心估计；`planning.py` ±30° 组合侧抓与插值；`ik.py` 持久 TRAC-IK 与 FK 残差；`collision.py` 复用父项目检查器的自碰撞预筛（配 `scripts/collision_worker.py`）；`diagnostics.py` 无运动可达性诊断；`execution.py` 碰撞/执行器协议与接触证据；`thor.py` 相机适配、注入式 CapX 与感知设备选择；`xyz.py` 图片到 TCP 验收；`visualization.py` 双后端 TCP 对比。
 - `native/` 官方 TRAC-IK 与 G1 文本链求解器；`robot/` 已核对 URDF 与运动链；`scripts/` 运动链导出、原生构建、Thor 与本机影子入口；`tests/` 覆盖几何、配置、安全、可达性、接口闭环与真实原生 IK。
 
 ## 技术栈与外部依赖
@@ -57,26 +57,15 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 
 - 历史结论（详见 Git 历史）：macOS/Thor 原生 TRAC-IK 可用；G1 URDF 与 Thor `xr_teleoperate` 逐字节一致；CapX `ArmController` 构造会自动回零、只接受上层注入控制器；Dex1-1 名义 TCP `0.150215608966 m`（两指内表面间的面积加权质心）；肩部 `[0.004,±0.1002,0.2478]`，杆长上限 `0.560610 m`。腰部三关节在 `torso_link` **之下**，规划器不使用，遥操也未用。
 - 缓存图本机基准（**当前配置为旧标定**）：现场图 `raw_*_20260801_164911` 瓶心 `[0.5443,0.0075,0.0249]`、深度 0.6073、瓶径 0.0624（与 thor 实测一致）；新标定下为 `[0.5937,0.0841,-0.0492]`、0.6872、0.0590。桌面图 `left/right.jpg` 新标定瓶径 0.0644、旧标定 0.0691。
-- 棋盘 PnP（25 mm 方格，重投影 0.3 px）反解：设计名义外参下桌面法向与竖直差 `5.63°`（瓶心变化 `68 mm`），是外参旋转误差上界。判定过程留档：新标定 fx 比旧的高 **20.5%**——同一台相机 fx 不应变，说明**至少一次标定病态**（标定板在画面里只占 0.6–0.9%）。极线错位 4.4px→1.6px 只检验旋转、**不检验尺度**；棋盘也不能验尺度，它就是标定所用的板，属循环论证。
-- **已切回旧标定**（2026-08-02，用户决定）。依据：0801 现场运行与本机复现**两次独立测量**都报瓶径 0.062 m，与真值分毫不差；旧标定把瓶心拉到左肩距 0.5918 m，距实测无解边界 0.573 m 仅差 19 mm（新标定差 88 mm）。两份配置的标定与外参**成对**切回 legacy（外参必须同切，20260801 外参由新标定的矫正旋转 R1 复合而来）。**保留疑点**：桌面缓存图那组旧标定瓶径 69.1 mm 偏 +11.5%，未解释。
+- 棋盘 PnP（25 mm 方格，重投影 0.3 px）反解：设计名义外参下桌面法向与竖直差 `5.63°`（瓶心变化 `68 mm`），是外参旋转误差上界。新标定 fx 比旧的高 **20.5%**——同一台相机 fx 不应变，说明**至少一次标定病态**（标定板在画面里只占 0.6–0.9%）。极线错位只检验旋转、**不检验尺度**；棋盘也不能验尺度，它就是标定所用的板，属循环论证。
+- **已切回旧标定**（2026-08-02，用户决定）：0801 现场与本机复现两次独立测量都报瓶径 0.062 m；旧标定把瓶心拉到左肩距 0.5918 m，距实测无解边界仅差 19 mm（新标定差 88 mm）。标定与外参**成对**切回 legacy（外参必须同切，20260801 外参由新标定的矫正旋转 R1 复合而来）。**保留疑点**：桌面缓存图那组旧标定瓶径偏 +11.5%，未解释。
 - **可达性预检已补进生产路径**（2026-08-01）：原先两处用**机身原点**距离对 `max_reach_m=0.78` 判断，而手臂挂在肩上，现按肩距判定。硬拒绝**仅当两项标定验收布尔量同时为真时生效**，否则只记 WARNING 照常求解——遥操已抓到被判超界的瓶子。
 - 侧抓可解半径远严于杆长上界。种子姿态**只影响 TRAC-IK 收敛、不改变解是否存在**：11:50 帧 60 个随机种子中 8 个成功（零位在内），11:03 帧 60 个全败（详见下方多起点实测）。曾误报"±8 mm 窄成功窗口"与"太近抓不住"，**已作废**——那是仿真前移瓶子时桌子没跟着移、瓶心越过桌沿自由落体所致，仿真侧已修。
 - **真实可抓边界（现场场景，左臂，瓶子稳放桌面）**：左肩距 0.5730 m 无逆解；0.5392 / 0.5226 / 0.4902 / 0.4591 m **全部成功**（双指接触、抬升 91–93 mm）。**近端无下界**，边界在 0.5392～0.5730 m；`side_grasp_planning_radius_m=0.54` 依据即"已验证的最远可抓距离"。现场帧亦印证：0.5121 m 可规划、0.5422 m 全无解。
 - **抓取失败与侧抓姿态候选无关**（已验证）：各成功档选中的候选各不相同，与成败无相关；唯一失败是远端真无逆解。姿态惩罚 `0.02×偏角²`（30° 仅 0.0055）比关节行程平方和小两个数量级，排序几乎只看关节移动量。
-- **"TRAC-IK chain 与 Pinocchio FK 差 11.3 cm"的外部结论已证伪**（2026-08-02）。本链 FK 在 q=0 得
-  `[0.353953,0.148633,0.051225]`，与对方算的 TRAC-IK 值**逐位一致**；差额完全分解为两项**定义差**：
-  ① TCP 不同（`G1_29_ArmIK` 的 `L_ee` 是 wrist+0.05 m 遥操内部帧，本项目用 wrist+0.150216 m 的 Dex1-1
-  抓取中心，差 100.216 mm）；② **根坐标系不同**（对方 `pelvis`、本项目 `torso_link`，差额正是 URDF
-  `waist_roll_joint` 原点 `[-0.0039635,0,0.044]`；本链 FK 加此偏移**精确到 1e-6 m** 复现对方数值）。
-  故"改写 `g1_trac_ik.cpp` 从 URDF 建链"不改变任何数值。顺带复核外参：`thor_camera_to_body_legacy.json`
-  平移与 URDF `d435_joint` 只差 ~12 mm（误用 pelvis 系会差 44 mm），**确系 `torso_link` 系**。
+- **"TRAC-IK chain 与 Pinocchio FK 差 11.3 cm"的外部结论已证伪**（2026-08-02）：本链 FK 在 q=0 得 `[0.353953,0.148633,0.051225]`，与对方算的 TRAC-IK 值**逐位一致**；差额完全分解为两项**定义差**——① TCP 不同（`L_ee` 是 wrist+0.05 m 遥操内部帧，本项目用 wrist+0.150216 m 的抓取中心，差 100.216 mm）；② **根坐标系不同**（对方 `pelvis`、本项目 `torso_link`，差额正是 URDF `waist_roll_joint` 原点 `[-0.0039635,0,0.044]`，本链 FK 加此偏移**精确到 1e-6 m** 复现对方数值）。故"改写 `g1_trac_ik.cpp` 从 URDF 建链"不改变任何数值。顺带复核外参：平移与 URDF `d435_joint` 只差 ~12 mm（误用 pelvis 系会差 44 mm），**确系 `torso_link` 系**。第三次独立佐证见仿真的 FK 交叉审计。
 - 经典算法替换已否决：SGBM 24 ms、GrabCut 292 ms（比 SAM2 慢 1.8 倍）、YOLO-World 无经典替代；SGBM 在现场图直接失败（MAD `76.6 mm` 超 25 mm 门限）。
-- **CREStereo 跑 CPU 已修复**（2026-08-01，环境侧）。根因：`yolo_world` conda 环境装的是纯 CPU 版
-  onnxruntime；同机唯一 GPU 轮子按 NumPy 1.x 编译，装进 NumPy 2.4.4 的 `yolo_world` 会 `ImportError`
-  （已还原，备份在 `/home/aiot/backup_onnxruntime_cpu/`）。用 `--system-site-packages` 叠加环境
-  `/home/aiot/wuxi/venvs/rpent-grasp-gpu` 只覆盖 numpy 1.26.4 与 GPU onnxruntime，`3544→49.2 ms`。
-  `ExternalCREStereoBackend` 另加执行提供者自判：已在跑加速器就原样保留（保住 fp16 与引擎缓存），
-  只落 CPU 且有 CUDA 才强切，否则 WARNING 回退。
+- **CREStereo 跑 CPU 已修复**（2026-08-01，环境侧）：根因是 `yolo_world` conda 环境装了纯 CPU 版 onnxruntime，而同机唯一 GPU 轮子按 NumPy 1.x 编译、装进 NumPy 2.4.4 的 `yolo_world` 会 `ImportError`（已还原，备份在 `/home/aiot/backup_onnxruntime_cpu/`）。改用 `--system-site-packages` 叠加环境 `/home/aiot/wuxi/venvs/rpent-grasp-gpu` 只覆盖 numpy 1.26.4 与 GPU onnxruntime，`3544→49.2 ms`。`ExternalCREStereoBackend` 另加执行提供者自判：已在跑加速器就原样保留（保住 fp16 与引擎缓存），只落 CPU 且有 CUDA 才强切，否则 WARNING 回退。
 - 本机模型部署已完成，影子链路不依赖服务器；三个权重（CREStereo ONNX 25 MB / YOLO-World `.pt` 140 MB / SAM2 176 MB）全来自公开发布源且体积与 Thor 一致，推理代码取 `ibaiGorordo/ONNX-CREStereo-Depth-Estimation` 与 `facebookresearch/sam2`。本机 `.pt` 走 `set_classes` 需 CLIP，Thor 走 `.engine` 不需要。环境 `.venvs/rpent-traditional-grasp-macos`。
 - 本机与 Thor 一致性：桌面缓存图瓶心欧氏差 `0.54 mm`、0802 现场图 `< 0.3 mm`；残差来自 Thor fp16 TensorRT 与本机 fp32 CPU。本机全链路 8.2 s。**本机可离线复算任一现场帧的完整规划**，是当前最快的对照手段。
 
@@ -86,9 +75,8 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
   任务同为"不移动自身"、底盘均未动。失败模式已从"够不着"变成"过不了权威校验"。**
   - 本项目这次**规划是成功的**：`depth=0.573m diameter=0.062m`，可达性预检 `within_radius=True`、
     `required_base_advance=0`，产出 3 个 ranked 候选（`pitch_+30deg` / `pitch_+20deg_yaw_-10deg` /
-    `pitch_+20deg`，按 score 0.461/0.572/0.642 升序）。死在父项目
-    `validate_traditional_grasp_path`：`status=collision_failed`，
-    `error=no ranked side-grasp candidate passed authoritative validation`。
+    `pitch_+20deg`，按 score 0.461/0.572/0.642 升序）。死在父项目 `validate_traditional_grasp_path`：
+    `collision_failed / no ranked side-grasp candidate passed authoritative validation`。
   - **legacy 成功那次 `validate_traditional_grasp_path` 调用 0 次**——它**根本不过这道校验**，也没有
     计划签名、TTL、种子漂移检查。所以这不是抓取质量之争，是**我们多了一整套安全门而对方没有**。
     对方自身拒了 4 个点云候选后执行第 5 个（`candidate_id=4`）。
@@ -96,13 +84,13 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
     碰撞**、`pitch_+20deg` 34 点里 13 点碰撞，都是 `torso_link_0 <-> left_shoulder_yaw_link_0`；
     **`pitch_+20deg_yaw_-10deg` 34 点零碰撞**。碰撞点集中在**开头的关节空间桥接段与结尾的后撤段**
     （肩 roll −0.19..−0.06），**不在抓取位姿本身**。检查器在零位报 0 碰撞，故**不是坏掉的门**。
-  - **两个独立缺陷由此坐实**：① **本项目排序对自碰撞完全无感**（`collision_check_detail=
-    "collision checker not configured"`，我方没有碰撞检查器，只按关节行程排序），把真会撞的候选排在
-    第一；② **零碰撞的候选 2 也没通过，且原因无从查证**——父项目的
+  - **缺陷一（已修，见下）**：本项目排序原先对自碰撞完全无感（`collision_check_detail=
+    "collision checker not configured"`，只按关节行程排序），把真会撞的候选排在第一。
+  - **缺陷二（未解，需父项目配合）：零碰撞的候选 2 也没通过，且原因无从查证**——父项目的
     `traditional side-grasp candidate validation: ... rank=... success=... error=...` 这行 INFO
     **不落在运行目录任何文件里**。已排除关节限位（三条轨迹 0 越界）与碰撞，剩余嫌疑是计划 TTL(15 s)、
     种子漂移(容差 0.05 rad，16:43 曾实测漂到 0.102)、计划摘要校验，需父项目补日志才能定位。
-
+- **自碰撞预筛已落地**（2026-08-02，用户决定复用父项目检查器）。`collision.py` 的 `SubprocessSelfCollisionChecker` + `scripts/collision_worker.py` 以**持久子进程**复用父项目的 `PinocchioSelfCollisionChecker`（与 `ik.py` 的 TRAC-IK 同一套模式）；**规划服务所在解释器没有 pinocchio，只有父项目的 `rpent` 环境有**，故必须跨进程。复用而非自研是关键——预筛必须与真正否决执行的那道门判定一致。`thor.py` 构建影子栈时装配，**未配置或启动失败只落 WARNING 并退化为无预筛**，规划不中断（父项目仍有权威校验）。`api.py` 现区分"全部候选自碰撞"与"无连续逆解"，并返回 `collision_rejected` 明细。**thor 上已实测**：预筛拿到的 `urdf_sha256=8bbf0066…` 与现场那道权威门**逐字一致**（同 1257 个碰撞对），三条轨迹判定也一致——`pitch_+30deg` 撞（样本 4/86）、`pitch_+20deg` 撞（2/81）、`pitch_+20deg_yaw_-10deg` 干净。样本数远大于航点数，因为父项目按 `sample_step_rad=0.05` 在航点之间插值，**这正是必须复用而非自己实现的原因**。预期 14:18 那次会把两条碰撞候选在排序阶段丢掉；但**缺陷二仍可能照样拦下干净的那条**，尚未现场复测。
 - **pick 后端归属判别（命名极易混淆，务必先看这条）**：父项目 `wuxi_adapter.py:421` `_pick_object_legacy`
   的错误串字面写着 `traditional grasp detector did not return a grasp message`，那是 **Contact-GraspNet
   时代的旧叫法**，比本项目还早；总结 JSON 里 LLM 又自己写 `"backend": "air_robot traditional method
@@ -142,7 +130,7 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 - **父项目 `traditional_grasp_backend.py` 的 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 默认值仍是 `yolo_world`**，2026-08-02 现场日志已实测证实：生产链路仍跑 **CPU 版 CREStereo**，单帧 4.3–4.9 s。子项目的自判逻辑正常工作（正确落 WARNING），缺的是父项目改默认解释器，需父项目单独提交。
 - 仿真侧曾把瓶底埋进桌面、又曾让瓶子走出桌沿，均已修（`--rest-bottle-on-table` 同时调高度与水平位置，出生点随桌走，穿模硬拦截）。Oracle 真值输入下瓶心 z 仍偏高 23–30 mm。**仿真 yaml 仍内联新标定，与子项目已不一致**；仿真仓库另有 12 个提交未推送。
 - **底盘不移动是硬约束**（用户 2026-08-02 明确）：遥操就是在底盘与躯干都不动、只用手臂的条件下抓到的，故 `required_base_advance_m` 只能作为"差多远"的诊断量，不能作为方案。尚未做在线相机采集回归；商标区域在反光、透明瓶、遮挡、低纹理下的深度成功率未实测。环境障碍物碰撞因缺场景模型未实现，实机前需清场和急停；Dex1-1 驱动量到毫米开口、接触阈值、TCP 六自由度外参也未做真机标定。`visualization.py` 与三个对比脚本为另一会话的未提交工作，未经本轮验证。
-- 下一步（按价值，已按 14:18/14:21 的 A/B 重排）：**① 本项目排序纳入自碰撞**（自带检查器或复用父项目的，至少让零碰撞候选排前）→ **② 父项目补 `candidate validation` 落盘日志**，否则非碰撞拒绝无从定位 → ③ 显式 bbox 被拒时回退自带检测器 → ④ 加抓取深度参数让 TCP 可落在瓶心之前 → ⑤ 姿态网格向有解一侧加密 → ⑥ 现场补量瓶身最宽处直径与瓶高 → ⑦ 多姿态手眼标定 → ⑧ 父项目改 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 上 GPU → ⑨ 清场急停后限速小步真机验证。
+- 下一步（按价值）：**① 现场复测自碰撞预筛**（跑 `AIR_ROBOT_PICK_BACKEND=traditional-live`，看是否只剩缺陷二）→ **② 父项目补 `candidate validation` 落盘日志**，否则非碰撞拒绝无从定位 → ③ 显式 bbox 被拒时回退自带检测器 → ④ 加抓取深度参数让 TCP 可落在瓶心之前 → ⑤ 姿态网格向有解一侧加密 → ⑥ 现场补量瓶身最宽处直径与瓶高 → ⑦ 多姿态手眼标定 → ⑧ 父项目改 `AIR_ROBOT_TRADITIONAL_GRASP_PYTHON` 上 GPU → ⑨ 清场急停后限速小步真机验证。
 
 ## 注意事项
 
