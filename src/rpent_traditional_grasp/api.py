@@ -543,35 +543,58 @@ class TraditionalGraspAPI:
         )
         if reach is not None and not reach["any_arm_within_serial_length_upper_bound"]:
             advance = reach["required_base_advance_m"]
-            logger.warning(
-                "目标超出手臂杆长上界，无需求解即可判定不可达: target=%s "
-                "arms=%s required_base_advance_m=%s",
-                object_prompt,
-                _bounded_repr(reach["arms"]),
-                advance,
+            # The bound itself is exact, but it is applied to a perceived target.
+            # Teleoperation has grasped a bottle that this pipeline reported as
+            # beyond the bound, so an unvalidated calibration can push a feasible
+            # target outside it. Only refuse to solve once both calibrations that
+            # place the target in the body frame have been accepted.
+            trusted = (
+                self.config.safety.stereo_calibration_validated
+                and self.config.safety.camera_to_body_validated
             )
-            return {
-                "success": False,
-                "action": "pick_object",
-                "object_prompt": object_prompt,
-                "requested_arm_side": arm_side,
-                "selected_arm_side": None,
-                "status": "unreachable",
-                "error": (
-                    "target is beyond the arm serial-length bound; "
-                    + (
-                        f"advance the base by {advance:.3f} m"
-                        if advance is not None
-                        else "no forward base travel can bring it into reach"
-                    )
-                ),
-                "verification": None,
-                "execution": None,
-                "bbox": search.get("bbox"),
-                **_empty_pick_artifacts(),
-                "backend": "rpent_traditional_grasp.TraditionalGraspAPI.pick_object",
-                "reach": reach,
-            }
+            if not trusted:
+                logger.warning(
+                    "目标超出手臂杆长上界，但标定尚未验收，继续尝试求解: "
+                    "target=%s arms=%s required_base_advance_m=%s "
+                    "stereo_validated=%s camera_to_body_validated=%s",
+                    object_prompt,
+                    _bounded_repr(reach["arms"]),
+                    advance,
+                    self.config.safety.stereo_calibration_validated,
+                    self.config.safety.camera_to_body_validated,
+                )
+            else:
+                logger.warning(
+                    "目标超出手臂杆长上界，无需求解即可判定不可达: target=%s "
+                    "arms=%s required_base_advance_m=%s",
+                    object_prompt,
+                    _bounded_repr(reach["arms"]),
+                    advance,
+                )
+                return {
+                    "success": False,
+                    "action": "pick_object",
+                    "object_prompt": object_prompt,
+                    "requested_arm_side": arm_side,
+                    "selected_arm_side": None,
+                    "status": "unreachable",
+                    "error": (
+                        "target is beyond the arm serial-length bound; "
+                        + (
+                            f"advance the base by {advance:.3f} m"
+                            if advance is not None
+                            else "no forward base travel can bring it into reach"
+                        )
+                    ),
+                    "verification": None,
+                    "execution": None,
+                    "bbox": search.get("bbox"),
+                    **_empty_pick_artifacts(),
+                    "backend": (
+                        "rpent_traditional_grasp.TraditionalGraspAPI.pick_object"
+                    ),
+                    "reach": reach,
+                }
         planned: list[tuple[IKPath, np.ndarray, dict[str, object]]] = []
         errors: dict[str, str] = {}
         for candidate in candidates:

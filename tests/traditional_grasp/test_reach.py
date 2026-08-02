@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -118,6 +119,10 @@ def test_plan_rejects_an_out_of_reach_target_before_solving_ik(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api = _far_target_api()
+    # The bound is exact but is applied to a perceived target, so the refusal
+    # only stands once both calibrations placing that target are accepted.
+    api.config.safety.stereo_calibration_validated = True
+    api.config.safety.camera_to_body_validated = True
     solved: list[str] = []
     for arm, solver in api.ik_solvers.items():
         original = solver.solve
@@ -161,3 +166,19 @@ def test_reach_precheck_is_skipped_without_chain_geometry() -> None:
     # Falls back to the coarse body-origin gate, preserving the old behaviour.
     assert approach["approached"] is True
     assert approach["reach"] is None
+
+
+def test_unvalidated_calibration_keeps_solving_a_target_beyond_the_bound(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    api = _far_target_api()
+    assert api.config.safety.stereo_calibration_validated is False
+    assert api.config.safety.camera_to_body_validated is False
+
+    with caplog.at_level(logging.WARNING, logger="rpent_traditional_grasp.api"):
+        plan = api.plan_pick_object(object_prompt="bottle")
+
+    # Teleoperation has grasped a bottle this pipeline called out of reach, so an
+    # unvalidated calibration must not veto the solve before it is attempted.
+    assert plan["status"] != "unreachable"
+    assert "标定尚未验收，继续尝试求解" in caplog.text
