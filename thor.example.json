@@ -54,7 +54,9 @@
     "side_grasp_orientation_penalty": 0.02,
     "max_ranked_candidates": 6,
     "tip_offset_m": 0.150215608966,
-    "preferred_arm": "auto"
+    "preferred_arm": "auto",
+    "left_empirical_grasp_offset_m": [0.0146, 0.0874, 0.0013],
+    "right_empirical_grasp_offset_m": [-0.0047, 0.0388, 0.0301]
   },
   "safety": {
     "mode": "shadow",

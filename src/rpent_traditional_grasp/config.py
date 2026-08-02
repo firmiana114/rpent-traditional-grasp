@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -97,6 +98,18 @@ class PlannerConfig:
     # Advice only; rejection uses the rigorous bound alone.
     side_grasp_planning_radius_m: float = 0.54
     preferred_arm: str = "auto"
+    # Empirical end-to-end correction added to the grasp-center target, in the
+    # contact frame (x = horizontal shoulder→bottle approach, y = its left,
+    # z = up). Derived from teleop grasps recorded in tcp_calibration.json.
+    # It is deliberately NOT folded into tip_offset_m and must never flip
+    # gripper_tcp_calibration_validated: that file's object centres come from
+    # the same stereo chain under question, so it absorbs TCP error and
+    # perception error together and cannot separate them. All zeros disables
+    # it. Per-arm because the two arms measured 87 vs 39 mm laterally, which is
+    # impossible for mirror-symmetric hardware and hints the residue is
+    # perception, not geometry.
+    left_empirical_grasp_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    right_empirical_grasp_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     side_grasp_pitch_degrees: tuple[float, ...] = (
         10.0,
         -10.0,
@@ -243,6 +256,18 @@ class TraditionalGraspConfig:
             raise ValueError("min_depth_m 必须小于 max_depth_m")
         if not 0.0 < self.planner.tip_offset_m < 0.3:
             raise ValueError("tip_offset_m 必须位于 (0, 0.3) m")
+        for side in ("left", "right"):
+            offset = getattr(self.planner, f"{side}_empirical_grasp_offset_m")
+            if len(offset) != 3 or not all(math.isfinite(v) for v in offset):
+                raise ValueError(
+                    f"{side}_empirical_grasp_offset_m 必须是三个有限数值"
+                )
+            # A correction larger than the arm's own reach margin would be a
+            # configuration mistake, not a calibration.
+            if max(abs(v) for v in offset) > 0.15:
+                raise ValueError(
+                    f"{side}_empirical_grasp_offset_m 单轴不得超过 0.15 m"
+                )
         if len(self.planner.left_tcp_rotation) != 9:
             raise ValueError("left_tcp_rotation 必须包含 9 个元素")
         if len(self.planner.right_tcp_rotation) != 9:

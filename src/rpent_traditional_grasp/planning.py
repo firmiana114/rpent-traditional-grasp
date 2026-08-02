@@ -178,6 +178,68 @@ def interpolate_joint_bridge(
     ]
 
 
+LEFT_SHOULDER_BODY = np.array([0.0039563, 0.10022, 0.24778], dtype=np.float64)
+RIGHT_SHOULDER_BODY = np.array([0.0039563, -0.10022, 0.24778], dtype=np.float64)
+
+
+def _contact_frame_axes(target: np.ndarray, arm: str) -> np.ndarray:
+    """Build the contact frame the teleop TCP calibration was expressed in.
+
+    x points horizontally from the shoulder to the bottle, z is up, y closes
+    the right-handed set. Reproduced exactly from the upstream
+    ``build_horizontal_contact_pose`` so the recorded offsets keep their
+    meaning; a different frame would silently rotate the correction.
+    """
+    shoulder = LEFT_SHOULDER_BODY if arm == "left" else RIGHT_SHOULDER_BODY
+    x_axis = target - shoulder
+    x_axis[2] = 0.0
+    norm = float(np.linalg.norm(x_axis))
+    x_axis = x_axis / norm if norm > 1e-9 else np.array([1.0, 0.0, 0.0])
+    z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    y_axis = np.cross(z_axis, x_axis)
+    y_norm = float(np.linalg.norm(y_axis))
+    y_axis = y_axis / y_norm if y_norm > 1e-9 else np.array([0.0, 1.0, 0.0])
+    z_axis = np.cross(x_axis, y_axis)
+    return np.column_stack([x_axis, y_axis, z_axis])
+
+
+def _apply_empirical_grasp_offset(
+    target: np.ndarray,
+    arm: str,
+    config: PlannerConfig,
+) -> tuple[np.ndarray, str]:
+    """Shift the grasp target by the configured empirical correction.
+
+    This is an end-to-end compensation measured from successful teleop grasps,
+    not a validated gripper calibration; it stays separate from ``tip_offset_m``
+    so it can be switched off without disturbing the kinematic model.
+    """
+    values = (
+        config.left_empirical_grasp_offset_m
+        if arm == "left"
+        else config.right_empirical_grasp_offset_m
+    )
+    offset = np.asarray(values, dtype=np.float64)
+    if not np.any(offset):
+        return target, "disabled"
+    rotation = _contact_frame_axes(target, arm)
+    shifted = target + rotation @ offset
+    detail = (
+        f"contact_xyz=[{offset[0]:+.4f},{offset[1]:+.4f},{offset[2]:+.4f}]"
+        f" body_delta=[{shifted[0] - target[0]:+.4f},"
+        f"{shifted[1] - target[1]:+.4f},{shifted[2] - target[2]:+.4f}]"
+    )
+    logger.warning(
+        "已施加经验抓取偏置（非验收标定，来自遥操 tcp_calibration）: arm=%s %s "
+        "target_before=[%.4f,%.4f,%.4f] target_after=[%.4f,%.4f,%.4f]",
+        arm,
+        detail,
+        *target,
+        *shifted,
+    )
+    return shifted, detail
+
+
 def compute_gripper_tcp_target(
     estimate: BottleEstimate,
     *,
@@ -206,6 +268,8 @@ def compute_gripper_tcp_target(
         arm = "left" if target[1] >= 0.0 else "right"
         selection_policy = "body_y_side"
 
+    target, offset_applied = _apply_empirical_grasp_offset(target, arm, config)
+
     distance_m = float(np.linalg.norm(target))
     if distance_m > config.max_reach_m:
         logger.warning(
@@ -220,11 +284,13 @@ def compute_gripper_tcp_target(
         )
     logger.info(
         "最终夹爪 TCP XYZ 已计算: arm=%s policy=%s "
-        "xyz=[%.4f,%.4f,%.4f] distance=%.4fm orientation=preserve_initial",
+        "xyz=[%.4f,%.4f,%.4f] distance=%.4fm orientation=preserve_initial "
+        "empirical_offset=%s",
         arm,
         selection_policy,
         *target,
         distance_m,
+        offset_applied,
     )
     return GripperTarget(
         arm=arm,
