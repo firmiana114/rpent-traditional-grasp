@@ -106,3 +106,24 @@ def test_offset_does_not_touch_the_kinematic_tip_offset() -> None:
     # there would corrupt the kinematic model and the collision geometry.
     config = PlannerConfig(left_empirical_grasp_offset_m=(0.0146, 0.0874, 0.0013))
     assert config.tip_offset_m == 0.150215608966
+
+
+def test_configured_thor_offsets_carry_the_centre_convention_correction() -> None:
+    """The shipped numbers must be the corrected ones, not the raw calibration.
+
+    tcp_calibration.json measures against the median of the whole masked cloud.
+    Our centre is 17.9 mm further along the approach and 16.6 mm lower, so the
+    raw values would apply a centre-convention difference as a gripper error.
+    """
+    config = TraditionalGraspConfig.from_json("thor.example.json")
+    left = np.asarray(config.planner.left_empirical_grasp_offset_m)
+    right = np.asarray(config.planner.right_empirical_grasp_offset_m)
+    raw_left = np.array([0.0178, 0.0874, 0.0013])
+    raw_right = np.array([-0.0015, 0.0388, 0.0301])
+    # depth 0.1034 vs our equivalent 0.100216, then the measured centre gap.
+    axial = 0.1034 - 0.100216
+    centre_gap = np.array([0.0179, 0.0025, -0.0166])
+    assert np.allclose(left, raw_left - centre_gap - [axial, 0, 0], atol=5e-5)
+    assert np.allclose(right, raw_right - centre_gap - [axial, 0, 0], atol=5e-5)
+    # The lateral term is what the two chains agree on; it must survive.
+    assert left[1] > 0.08

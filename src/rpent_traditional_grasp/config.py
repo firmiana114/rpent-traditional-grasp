@@ -108,6 +108,14 @@ class PlannerConfig:
     # it. Per-arm because the two arms measured 87 vs 39 mm laterally, which is
     # impossible for mirror-symmetric hardware and hints the residue is
     # perception, not geometry.
+    # The recorded numbers are relative to that chain's own bottle centre, the
+    # median of the whole masked cloud, which sits 17.9 mm nearer and 16.6 mm
+    # higher than the label-band-plus-half-diameter centre used here (measured
+    # on the 11:03 and 11:50 field frames, identical to 0.1 mm on both). That
+    # difference is subtracted before the values are configured, otherwise a
+    # pure difference in centre convention would be applied as if it were a
+    # gripper error. The lateral term survives the subtraction almost intact
+    # (2.5 mm), so it is the only component the two chains actually agree on.
     left_empirical_grasp_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     right_empirical_grasp_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     side_grasp_pitch_degrees: tuple[float, ...] = (

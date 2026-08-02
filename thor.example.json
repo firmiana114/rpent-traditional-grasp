@@ -55,8 +55,8 @@
     "max_ranked_candidates": 6,
     "tip_offset_m": 0.150215608966,
     "preferred_arm": "auto",
-    "left_empirical_grasp_offset_m": [0.0146, 0.0874, 0.0013],
-    "right_empirical_grasp_offset_m": [-0.0047, 0.0388, 0.0301]
+    "left_empirical_grasp_offset_m": [-0.0033, 0.0849, 0.0179],
+    "right_empirical_grasp_offset_m": [-0.0226, 0.0363, 0.0467]
   },
   "safety": {
     "mode": "shadow",
