@@ -22,6 +22,14 @@ def _bounded_repr(value: object, limit: int = 256) -> str:
     return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
 
 
+def _format_joint_state(joints: np.ndarray) -> str:
+    """Render the seed joint vector compactly enough to keep in every request."""
+    values = np.asarray(joints, dtype=np.float64).ravel()
+    if values.size == 0 or not np.all(np.isfinite(values)):
+        return "invalid"
+    return "[" + ",".join(f"{value:.6f}" for value in values) + "]"
+
+
 class PlanningAPI(Protocol):
     """Subset of the grasp API required by the service transport."""
 
@@ -93,13 +101,18 @@ class TraditionalGraspPlanningService:
         bbox_format = str(payload.get("bbox_format", "auto"))
         logger.info(
             "收到抓取规划请求: target=%s arm=%s bbox=%s bbox_format=%s "
-            "state_timestamp_s=%.6f current_q_shape=%s",
+            "state_timestamp_s=%.6f current_q_shape=%s current_q_rad=%s",
             object_prompt,
             arm_side,
             _bounded_repr(bbox),
             bbox_format,
             state_timestamp_s,
             current_q.shape,
+            # The seed is the only record of where the arm actually was. Its
+            # forward kinematics is an exactly known 3D point inside the camera
+            # view, which is what calibration validation needs. A failed IK
+            # solve produces no trajectory at all, so nothing else preserves it.
+            _format_joint_state(current_q),
         )
         result = self.api.plan_pick_object(
             object_prompt=object_prompt,

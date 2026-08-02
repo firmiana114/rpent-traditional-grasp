@@ -121,3 +121,17 @@ def test_planning_service_signs_every_ranked_side_grasp_candidate() -> None:
     assert plans[0]["plan_id"] != plans[1]["plan_id"]
     assert all(len(plan["plan_id"]) == 64 for plan in plans)
     assert result["plan"] == plans[0]
+
+
+def test_planning_request_logs_the_seed_joint_values() -> None:
+    """The seed is the only record of where the arm was when IK fails."""
+    from rpent_traditional_grasp.service import _format_joint_state
+
+    joints = np.linspace(-0.5, 0.5, 14)
+
+    rendered = _format_joint_state(joints)
+
+    assert rendered.startswith("[-0.500000,")
+    assert rendered.count(",") == 13
+    assert _format_joint_state(np.array([np.nan, 0.0])) == "invalid"
+    assert _format_joint_state(np.array([])) == "invalid"

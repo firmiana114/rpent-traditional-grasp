@@ -7,15 +7,19 @@
     "sam2_config": "configs/sam2.1/sam2.1_hiera_s.yaml",
     "crestereo_repo": "/home/aiot/airbot/Projects/rabbitbot-dev-ros2/3rdparty/mingjuwang",
     "crestereo_model": "/home/aiot/mingjuwang/vision/ONNX-CREStereo-Depth-Estimation/models/crestereo_init_iter5_480x640.onnx",
-    "stereo_calibration": "config/thor_stereo_20260801.json",
-    "camera_to_body": "config/thor_camera_to_body_20260801.json",
+    "stereo_calibration": "config/thor_stereo_legacy.json",
+    "camera_to_body": "config/thor_camera_to_body_legacy.json",
     "gripper_specification": "config/g1d_dex1_1_nominal.json",
     "robot_urdf": "/home/aiot/fuchengjia/Projects/xr_teleoperate/assets/g1/g1_body29_hand14.urdf",
     "left_ik_binary": "native/build/g1_trac_ik",
     "right_ik_binary": "native/build/g1_trac_ik"
   },
   "perception": {
-    "target_prompts": ["bottle", "water bottle", "bottled water"],
+    "target_prompts": [
+      "bottle",
+      "water bottle",
+      "bottled water"
+    ],
     "detection_confidence": 0.45,
     "detection_iou": 0.45
   },
@@ -26,8 +30,20 @@
     "cartesian_step_m": 0.01,
     "rotation_step_rad": 0.12,
     "max_adaptive_subdivisions": 5,
-    "side_grasp_pitch_degrees": [10, -10, 20, -20, 30, -30],
-    "side_grasp_yaw_degrees": [10, -10, 20, -20],
+    "side_grasp_pitch_degrees": [
+      10,
+      -10,
+      20,
+      -20,
+      30,
+      -30
+    ],
+    "side_grasp_yaw_degrees": [
+      10,
+      -10,
+      20,
+      -20
+    ],
     "max_side_grasp_tilt_degrees": 30,
     "joint_bridge_step_rad": 0.08,
     "joint_bridge_max_tcp_drop_m": 0.02,
