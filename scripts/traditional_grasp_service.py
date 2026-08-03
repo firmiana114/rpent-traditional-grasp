@@ -29,6 +29,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="192.168.123.164")
     parser.add_argument("--port", type=int, default=55555)
     parser.add_argument("--plan-ttl-s", type=float, default=15.0)
+    # Both are required together: a half-configured pair would silently fall
+    # back to the camera and the caller would never learn its images were unused.
+    parser.add_argument(
+        "--left-image",
+        default=None,
+        help=(
+            "Read the left frame from this file instead of opening the camera. "
+            "Used by the MuJoCo simulation, which renders the pair from another "
+            "process. Requires --right-image."
+        ),
+    )
+    parser.add_argument("--right-image", default=None)
     return parser
 
 
@@ -48,17 +60,25 @@ def _isolate_protocol_stdout() -> TextIO:
 
 def main() -> int:
     args = _parser().parse_args()
+    if bool(args.left_image) != bool(args.right_image):
+        raise SystemExit("--left-image 与 --right-image 必须成对提供")
     protocol_stdout = _isolate_protocol_stdout()
     configure_logging()
     root = Path(__file__).resolve().parents[1]
     config_path = Path(args.config).resolve()
     executor = PlanningArmExecutor()
     with redirect_stdout(sys.stderr):
+        # Simulation renders the MuJoCo stereo pair to files because the
+        # simulated world lives in the arm service process, not this one. The
+        # camera stays the default so the robot path is untouched.
+        use_images = bool(args.left_image and args.right_image)
         api = build_thor_shadow_api(
             config_path,
             host=args.host,
             port=args.port,
-            online_camera=True,
+            left_image=args.left_image,
+            right_image=args.right_image,
+            online_camera=not use_images,
             planning_executor=executor,
         )
     service = TraditionalGraspPlanningService(
