@@ -19,14 +19,12 @@ submodule；父项目以独立提交接入其规划服务。核心链路为：�
 
 ## 技术栈与外部依赖
 
-- Python 3.10–3.12、NumPy、OpenCV、Ultralytics、SAM2、ONNX Runtime；C++17、CMake/Ninja、Eigen3、Orocos KDL、NLopt。
-- `traclabs/trac_ik@90162ac2...`（BSD-3-Clause，源码在 `native/vendor/`）；reBot 仅参考流程概念，未复制其源码和 GraspNet，详见 `UPSTREAM.md`。
+- Python 3.10–3.12、NumPy、OpenCV、Ultralytics、SAM2、ONNX Runtime；C++17、CMake/Ninja、Eigen3、Orocos KDL、NLopt。`traclabs/trac_ik@90162ac2...`（BSD-3-Clause，源码在 `native/vendor/`）；reBot 仅参考流程概念，未复制其源码和 GraspNet，详见 `UPSTREAM.md`。
 - 模型权重与第三方推理代码均为外部资源，不进入本仓库；本机放在 `/Users/firmiana/project/rpent-models/`（权重分三个子目录，`vendor/` 存两个公开仓库）。
 
 ## 运行入口、配置与数据流
 
-- 配置入口：Thor 用 `thor.example.json`，本机用 `macos.example.json`，两份共用 `config/` 下同一批标定文件。感知设备由 `thor.py` 按 cuda→mps→cpu 自动选，`RPENT_TRADITIONAL_GRASP_DEVICE` 可覆盖。
-- 原生入口 `native/build/g1_trac_ik`（每臂一个求解进程）；影子入口 `scripts/run_thor_shadow.py`，默认只运行 `search`。
+- 配置入口：Thor 用 `thor.example.json`，本机用 `macos.example.json`，两份共用 `config/` 下同一批标定文件。感知设备由 `thor.py` 按 cuda→mps→cpu 自动选，`RPENT_TRADITIONAL_GRASP_DEVICE` 可覆盖。原生入口 `native/build/g1_trac_ik`（每臂一个求解进程）；影子入口 `scripts/run_thor_shadow.py`，默认只运行 `search`。
 - 日志默认 INFO；关键配置、感知、执行提供者、IK、可达性、门禁和执行均保留上下文及异常链；服务在文件描述符层隔离 JSON 回复与第三方输出，父项目另有限量抗噪读取。在线抓取把原始/校正双目、SAM2 框选图、掩码和叠加图保存到父项目单次运行目录，并用帧 SHA-256、输入框、候选分数及掩码框串联 INFO 日志。
 - 三维点先位于左相机坐标系，再通过配置外参变换到 `torso_link` 机身坐标系。
 
@@ -53,13 +51,12 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 
 - **`search_object` 服务分派已入库（2026-08-03，修掉一处跨仓同步风险）**。父项目**已提交**的
   `traditional_grasp_backend.search_object` 向规划服务发 `operation="search_object"`，而子项目**已提交**的
-  `service.py` 只认 `ping`/`close`/`plan_pick`，遇到该操作直接抛 `不支持的规划服务操作`；链路能在 thor 上
-  跑，**仅仅因为那 51 行一直躺在服务器工作区没提交**，任何 `git checkout .` 或重新 clone 都会让 LLM 拿不到
-  bbox（11:50 促成抓取成功的 bbox 正来自这条链路）。已取回审阅并提交，补 4 个测试锁住契约（分派与元数据、
-  空 `object_prompt` 拒绝、SAM2 `last_artifacts` 写入与**逐帧清零**、分割器无该属性时仍正常返回）；同时补上
-  诊断图路径回传，父项目 `_normalize_search_result` 早已在读这四个键，此前恒为 `None`。**thor 已同步到同一
-  提交**（树哈希一致、工作区干净），原先那 51 行经逐字节核对后 stash 留底；thor 的部署环境没装 pytest，故在
-  生产解释器上直接验了分派、元数据、路径透传与空提示拒绝。
+  `service.py` 只认 `ping`/`close`/`plan_pick`，遇到该操作直接抛 `不支持的规划服务操作`；链路能在 thor 上跑
+  **仅仅因为那 51 行一直躺在服务器工作区没提交**，任何 `git checkout .` 或重新 clone 都会让 LLM 拿不到 bbox
+  （11:50 促成抓取成功的 bbox 正来自这条链路）。已审阅提交并补 4 个测试锁住契约（分派与元数据、空
+  `object_prompt` 拒绝、SAM2 `last_artifacts` 写入与**逐帧清零**、分割器无该属性时仍正常返回）；同时补上诊断
+  图路径回传，父项目 `_normalize_search_result` 早已在读这四个键、此前恒为 `None`。**thor 已同步到同一提交**
+  （树哈希一致、工作区干净），原 51 行经逐字节核对后 stash 留底，并在生产解释器上复验了上述四项。
 - 历史结论（详见 Git 历史）：macOS/Thor 原生 TRAC-IK 可用；G1 URDF 与 Thor `xr_teleoperate` 逐字节一致；CapX `ArmController` 构造会自动回零、只接受上层注入控制器；Dex1-1 名义 TCP `0.150215608966 m`（两指内表面间的面积加权质心）；肩部 `[0.004,±0.1002,0.2478]`，杆长上限 `0.560610 m`。腰部三关节在 `torso_link` **之下**，规划器不使用，遥操也未用。
 - 缓存图本机基准（**当前配置为旧标定**）：现场图 `raw_*_20260801_164911` 瓶心 `[0.5443,0.0075,0.0249]`、深度 0.6073、瓶径 0.0624（与 thor 实测一致）；新标定下为 `[0.5937,0.0841,-0.0492]`、0.6872、0.0590。桌面图 `left/right.jpg` 新标定瓶径 0.0644、旧标定 0.0691。
 - 棋盘 PnP（25 mm 方格，重投影 0.3 px）反解：设计名义外参下桌面法向与竖直差 `5.63°`（瓶心变化 `68 mm`），是外参旋转误差上界。新标定 fx 比旧的高 **20.5%**——同一台相机 fx 不应变，说明**至少一次标定病态**（标定板在画面里只占 0.6–0.9%）。极线错位只检验旋转、**不检验尺度**；棋盘也不能验尺度，它就是标定所用的板，属循环论证。
@@ -71,7 +68,7 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 - **"TRAC-IK chain 与 Pinocchio FK 差 11.3 cm"的外部结论已证伪**（2026-08-02）：本链 FK 在 q=0 得 `[0.353953,0.148633,0.051225]`，与对方算的 TRAC-IK 值**逐位一致**；差额完全分解为两项**定义差**——① TCP 不同（`L_ee` 是 wrist+0.05 m 遥操内部帧，本项目用 wrist+0.150216 m 的抓取中心，差 100.216 mm）；② **根坐标系不同**（对方 `pelvis`、本项目 `torso_link`，差额正是 URDF `waist_roll_joint` 原点 `[-0.0039635,0,0.044]`，加此偏移**精确到 1e-6 m** 复现对方数值）。故"改写 `g1_trac_ik.cpp` 从 URDF 建链"不改变任何数值。顺带复核外参：平移与 URDF `d435_joint` 只差 ~12 mm（误用 pelvis 系会差 44 mm），**确系 `torso_link` 系**。
 - 经典算法替换已否决：SGBM 24 ms、GrabCut 292 ms（比 SAM2 慢 1.8 倍）、YOLO-World 无经典替代；SGBM 在现场图直接失败（MAD `76.6 mm` 超 25 mm 门限）。
 - **CREStereo 跑 CPU 已修复**（2026-08-01，环境侧）：根因是 `yolo_world` conda 环境装了纯 CPU 版 onnxruntime，而同机唯一 GPU 轮子按 NumPy 1.x 编译、装进 NumPy 2.4.4 的 `yolo_world` 会 `ImportError`（已还原，备份在 `/home/aiot/backup_onnxruntime_cpu/`）。改用 `--system-site-packages` 叠加环境 `/home/aiot/wuxi/venvs/rpent-grasp-gpu` 只覆盖 numpy 1.26.4 与 GPU onnxruntime，`3544→49.2 ms`。`ExternalCREStereoBackend` 另加执行提供者自判：已在跑加速器就原样保留（保住 fp16 与引擎缓存），只落 CPU 且有 CUDA 才强切，否则 WARNING 回退。
-- 本机模型部署已完成，影子链路不依赖服务器；三个权重（CREStereo ONNX 25 MB / YOLO-World `.pt` 140 MB / SAM2 176 MB）全来自公开发布源且体积与 Thor 一致，推理代码取 `ibaiGorordo/ONNX-CREStereo-Depth-Estimation` 与 `facebookresearch/sam2`。本机 `.pt` 走 `set_classes` 需 CLIP，Thor 走 `.engine` 不需要。环境 `.venvs/rpent-traditional-grasp-macos`。本机与 Thor 一致性：桌面缓存图瓶心欧氏差 `0.54 mm`、0802 现场图 `< 0.3 mm`（残差来自 Thor fp16 TensorRT 与本机 fp32 CPU）；本机全链路 8.2 s，**可离线复算任一现场帧的完整规划**，是当前最快的对照手段。
+- 本机模型部署已完成，影子链路不依赖服务器；三个权重（CREStereo ONNX 25 MB / YOLO-World `.pt` 140 MB / SAM2 176 MB）全来自公开发布源且体积与 Thor 一致，推理代码取 `ibaiGorordo/ONNX-CREStereo-Depth-Estimation` 与 `facebookresearch/sam2`。本机 `.pt` 走 `set_classes` 需 CLIP，Thor 走 `.engine` 不需要。环境 `.venvs/rpent-traditional-grasp-macos`。本机与 Thor 一致性：桌面缓存图瓶心欧氏差 `0.54 mm`、0802 现场图 `< 0.3 mm`（残差来自 Thor fp16 TensorRT 与本机 fp32 CPU）；本机全链路 8.2 s，**可离线复算任一现场帧的完整规划**——但按"注意事项"的工作方式，这只是服务器不在线时的临时手段，结论须回 thor 复验。
 
 ## 未确认、阻塞问题与下一步
 
@@ -148,5 +145,6 @@ cd ../../reBot-DevArm-Grasp && python scripts/sim_traditional_grasp.py \
 
 ## 注意事项
 
-- 父、子项目必须分别提交和同步；子项目不作 submodule，其路径由父项目本地排除规则隔离，不要在父项目提交中纳入 `traditional_grasp/` 内容。
+- **`ssh air-thor` 是主环境，事实认定以服务器上的运行结果为准**（用户 2026-08-03 明确）。真机、GPU 与完整部署只在 thor，本机没有硬件后端且推理精度不同（Thor fp16 TensorRT vs 本机 fp32 CPU），故本机**只承担服务器不在线时的部分验证**，其结论是临时参考、服务器恢复后须复验，落文时要显式标注。注意 thor 的 `yolo_world` 与 `rpent-grasp-gpu` 环境**都不装 pytest**，服务器侧验证要用生产解释器直接跑校验脚本。
+- 父、子项目必须分别提交和同步；子项目不作 submodule，其路径由父项目本地排除规则隔离，不要在父项目提交中纳入 `traditional_grasp/` 内容。同步方向为本机提交 → `git push origin` → thor `git fetch && git merge --ff-only`；**thor 工作区若有未提交改动，merge 会被拒，必须先 `git stash` 留底**。
 - 不得把示例配置直接切为 `live`，不得绕过碰撞检查和标定验证布尔门禁；TRAC-IK 只负责运动学求解，不提供碰撞安全保证。`macos.example.json` 与 `rpent-models/` 的绝对路径是本机部署事实，换机器须改；两个 `run_macos_*.sh` 支持用环境变量覆盖解释器与 SAM2 仓库。
