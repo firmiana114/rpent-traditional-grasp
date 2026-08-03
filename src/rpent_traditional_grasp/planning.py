@@ -89,18 +89,20 @@ def plan_fixed_side_grasp(
     return waypoints
 
 
-def plan_homing_waypoint(
+def plan_homing_pose(
     home_xz_and_abs_y_m: tuple[float, float, float],
     arm: str,
-    rotation: np.ndarray,
-) -> CartesianWaypoint:
-    """Return the post-grasp homing target, mirrored for the requested arm.
+) -> Pose:
+    """Return the ready pose to retract to, mirrored for the requested arm.
 
-    The rotation is the one the grasp was solved with, not a canonical
-    orientation. Re-orienting the wrist on the way home would rotate the held
-    bottle by the candidate's own tilt (10-30 deg for the pitch/yaw candidates
-    this planner emits), which risks spilling or shedding it for no benefit --
-    the point of homing is to retract the arm, not to standardise its pose.
+    Position and orientation are one package. An earlier version kept the grasp
+    orientation and moved only the position, to avoid rotating the held bottle;
+    measured on the robot 2026-08-03 that left the shoulder and elbow folded in
+    while the wrist was cranked to ~60 deg pitch to hold the fixed body-frame
+    orientation, which is the contorted posture the operator reported -- and the
+    bottle ended up tilted anyway. The ready pose looks natural precisely
+    because its position and its identity orientation are solved together, so
+    homing asks for both.
     """
     x_m, z_m, y_abs_m = (float(value) for value in home_xz_and_abs_y_m)
     if not all(math.isfinite(value) for value in (x_m, z_m, y_abs_m)):
@@ -110,11 +112,11 @@ def plan_homing_waypoint(
     y_m = abs(y_abs_m) if arm == "left" else -abs(y_abs_m)
     position = np.array([x_m, y_m, z_m], dtype=np.float64)
     logger.info(
-        "归位路点已生成: arm=%s xyz=[%.4f,%.4f,%.4f] orientation=preserve_grasp",
+        "归位目标位姿: arm=%s xyz=[%.4f,%.4f,%.4f] orientation=identity",
         arm,
         *position,
     )
-    return CartesianWaypoint("home", Pose(position, np.asarray(rotation, dtype=np.float64)))
+    return Pose(position, np.eye(3, dtype=np.float64))
 
 
 def side_grasp_rotation_candidates(

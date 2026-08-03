@@ -11,30 +11,26 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rpent_traditional_grasp.planning import plan_homing_waypoint
+from rpent_traditional_grasp.planning import plan_homing_pose
 from tests.traditional_grasp.test_api import make_api
 
 
-def test_homing_target_is_mirrored_per_arm_and_keeps_the_grasp_rotation() -> None:
-    rotation = np.array(
-        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
-    )
+def test_homing_target_is_mirrored_per_arm_and_uses_the_ready_orientation() -> None:
+    left = plan_homing_pose((0.30, 0.12, 0.14865), "left")
+    right = plan_homing_pose((0.30, 0.12, 0.14865), "right")
 
-    left = plan_homing_waypoint((0.30, 0.12, 0.14865), "left", rotation)
-    right = plan_homing_waypoint((0.30, 0.12, 0.14865), "right", rotation)
-
-    assert left.name == "home"
-    np.testing.assert_allclose(left.pose.position_m, [0.30, 0.14865, 0.12])
-    np.testing.assert_allclose(right.pose.position_m, [0.30, -0.14865, 0.12])
-    # 姿态必须原样保留 - 转腕会把握住的瓶子一起转过去
-    np.testing.assert_allclose(left.pose.rotation, rotation)
-    np.testing.assert_allclose(right.pose.rotation, rotation)
+    np.testing.assert_allclose(left.position_m, [0.30, 0.14865, 0.12])
+    np.testing.assert_allclose(right.position_m, [0.30, -0.14865, 0.12])
+    # 位置与朝向是一个整体。只取 ready 的位置而留着抓取姿态。
+    # 结果是肩肘收回而腕部拧到约 60 度去维持机身系里的固定朝向。
+    # 2026-08-03 实测的畸形姿态即此。
+    np.testing.assert_allclose(left.rotation, np.eye(3))
+    np.testing.assert_allclose(right.rotation, np.eye(3))
 
 
 def test_negative_abs_y_is_still_mirrored_outward() -> None:
-    rotation = np.eye(3)
-    left = plan_homing_waypoint((0.30, 0.12, -0.14865), "left", rotation)
-    assert left.pose.position_m[1] > 0.0
+    left = plan_homing_pose((0.30, 0.12, -0.14865), "left")
+    assert left.position_m[1] > 0.0
 
 
 @pytest.mark.parametrize(
@@ -47,7 +43,7 @@ def test_negative_abs_y_is_still_mirrored_outward() -> None:
 )
 def test_invalid_homing_inputs_are_rejected(home, arm) -> None:
     with pytest.raises(ValueError):
-        plan_homing_waypoint(home, arm, np.eye(3))
+        plan_homing_pose(home, arm)
 
 
 def test_plan_without_homing_is_unchanged() -> None:
@@ -82,7 +78,7 @@ def test_unsolvable_home_costs_the_segment_not_the_grasp(monkeypatch) -> None:
     def _boom(*args, **kwargs):
         raise RuntimeError("归位目标不可达")
 
-    monkeypatch.setattr(api_module, "plan_homing_waypoint", _boom)
+    monkeypatch.setattr(api_module, "plan_homing_pose", _boom)
     api = make_api()
 
     homed = api.plan_pick_object(
@@ -113,3 +109,49 @@ def test_homing_does_not_change_candidate_ranking() -> None:
 
     assert homed["plan"]["orientation_candidate"] == plain["plan"]["orientation_candidate"]
     assert homed["plan"]["score"] == pytest.approx(plain["plan"]["score"])
+
+
+def test_homing_lands_on_the_neutral_seed_solution_not_the_retreat_branch() -> None:
+    """The seed picks the redundancy branch, and retreat's branch is the folded one.
+
+    A 7-axis arm has a null space, so the same ready pose has many joint
+    solutions. Seeding the homing solve from retreat kept the arm in retreat's
+    branch: shoulder and elbow folded in while the wrist cranked to ~60 deg to
+    hold the orientation. Solving from the neutral seed is what reproduces the
+    posture ``ready_arm`` reaches.
+    """
+    api = make_api()
+    solver = api.ik_solvers["left"]
+    home_pose = plan_homing_pose((0.30, 0.12, 0.14865), "left")
+    expected = solver.solve(np.zeros(7), home_pose)
+
+    homed = api.plan_pick_object(
+        object_prompt="bottle",
+        arm_side="left",
+        home_xz_and_abs_y_m=(0.30, 0.12, 0.14865),
+    )
+
+    final = np.asarray(homed["plan"]["positions_rad"][-1], dtype=np.float64)
+    np.testing.assert_allclose(final, expected, atol=1e-9)
+
+
+def test_homing_is_a_joint_bridge_with_bounded_steps() -> None:
+    """Joint-space keeps every step inside the configured bridge limit."""
+    api = make_api()
+    step_limit = api.config.planner.joint_bridge_step_rad
+
+    homed = api.plan_pick_object(
+        object_prompt="bottle",
+        arm_side="left",
+        home_xz_and_abs_y_m=(0.30, 0.12, 0.14865),
+    )
+
+    names = homed["plan"]["waypoint_names"]
+    positions = [np.asarray(q, dtype=np.float64) for q in homed["plan"]["positions_rad"]]
+    start = names.index("retreat")
+    steps = [
+        float(np.max(np.abs(positions[i + 1] - positions[i])))
+        for i in range(start, len(positions) - 1)
+    ]
+    assert steps, "归位段必须至少有一个路点"
+    assert max(steps) <= step_limit + 1e-9, f"最大单步 {max(steps):.4f} 超过 {step_limit}"

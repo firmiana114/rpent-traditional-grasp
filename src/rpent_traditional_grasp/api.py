@@ -37,7 +37,7 @@ from rpent_traditional_grasp.planning import (
     interpolate_joint_bridge,
     interpolate_waypoints,
     plan_fixed_side_grasp,
-    plan_homing_waypoint,
+    plan_homing_pose,
     side_grasp_rotation_candidates,
 )
 
@@ -915,10 +915,19 @@ class TraditionalGraspAPI:
         arm: str,
         solver: IKSolver,
         approach: IKPath,
-        rotation: np.ndarray,
         home_xz_and_abs_y_m: tuple[float, float, float] | None,
     ) -> IKPath | None:
         """Solve the retract-to-ready extension, or ``None`` if unavailable.
+
+        The target is a joint configuration, not a Cartesian path. Tracking a
+        Cartesian target here would leave the 7-axis redundancy free for the
+        solver to resolve, and seeded from the retreat pose it resolved it into
+        a folded arm with a ~60 deg wrist -- the deformed posture measured on
+        2026-08-03. Solving the ready pose once from the neutral seed reproduces
+        the configuration ``ready_arm`` itself reaches, and a joint bridge to it
+        cannot be contorted because the posture *is* the target rather than a
+        constraint. It also mirrors how the path enters: a joint bridge in, a
+        joint bridge out.
 
         Deliberately isolated from the grasp solve: an unreachable homing target
         must not discard a candidate that grasps perfectly well. Homing is a
@@ -928,20 +937,45 @@ class TraditionalGraspAPI:
         if home_xz_and_abs_y_m is None:
             return None
         try:
-            home = plan_homing_waypoint(home_xz_and_abs_y_m, arm, rotation)
+            home_pose = plan_homing_pose(home_xz_and_abs_y_m, arm)
+            # Seed from the neutral pose, not from retreat: the seed is what
+            # picks the redundancy branch, and retreat's branch is the folded one.
+            home_q = solver.solve(np.zeros(7, dtype=np.float64), home_pose)
             last_q = np.asarray(approach.positions[-1], dtype=np.float64)
-            dense = interpolate_waypoints(
-                solver.forward(last_q),
-                [home],
-                self.config.planner.cartesian_step_m,
-                self.config.planner.rotation_step_rad,
-            )
-            return solve_continuous_path(
-                arm,
-                solver,
+            bridge = interpolate_joint_bridge(
                 last_q,
-                dense,
-                self.config.planner,
+                home_q,
+                self.config.planner.joint_bridge_step_rad,
+            )
+            positions = list(bridge)
+            names = [
+                f"home:{index + 1}/{len(positions)}"
+                for index in range(len(positions) - 1)
+            ] + ["home"]
+            previous = last_q
+            max_step = 0.0
+            score = 0.0
+            for position in positions:
+                delta = np.asarray(position, dtype=np.float64) - previous
+                max_step = max(max_step, float(np.max(np.abs(delta))))
+                score += float(np.sum(delta**2))
+                previous = position
+            reached = solver.forward(home_q)
+            logger.info(
+                "归位段已生成: arm=%s points=%d max_step=%.4frad "
+                "reached_xyz=[%.4f,%.4f,%.4f]",
+                arm,
+                len(positions),
+                max_step,
+                *reached.position_m,
+            )
+            return IKPath(
+                arm=arm,
+                joint_names=approach.joint_names,
+                positions=positions,
+                waypoint_names=names,
+                max_joint_step_rad=max_step,
+                score=score,
             )
         except Exception:
             logger.warning(
@@ -1020,7 +1054,6 @@ class TraditionalGraspAPI:
                     arm=arm,
                     solver=solver,
                     approach=approach_path,
-                    rotation=orientation.rotation,
                     home_xz_and_abs_y_m=home_xz_and_abs_y_m,
                 )
                 path = _combine_side_grasp_path(
