@@ -22,6 +22,25 @@ def _bounded_repr(value: object, limit: int = 256) -> str:
     return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
 
 
+def _parse_home_pose(value: object) -> tuple[float, float, float] | None:
+    """Accept the caller's post-grasp homing pose, or ``None`` to skip homing.
+
+    A malformed value must not cost the caller its grasp, so it degrades to no
+    homing with a WARNING rather than rejecting the whole planning request.
+    """
+    if value is None:
+        return None
+    try:
+        x_m, z_m, y_abs_m = (float(item) for item in value)  # type: ignore[misc]
+    except (TypeError, ValueError):
+        logger.warning("归位位姿格式非法，本次规划不带归位段: %s", _bounded_repr(value))
+        return None
+    if not all(math.isfinite(item) for item in (x_m, z_m, y_abs_m)):
+        logger.warning("归位位姿含非有限数值，本次规划不带归位段: %s", _bounded_repr(value))
+        return None
+    return (x_m, z_m, y_abs_m)
+
+
 def _format_joint_state(joints: np.ndarray) -> str:
     """Render the seed joint vector compactly enough to keep in every request."""
     values = np.asarray(joints, dtype=np.float64).ravel()
@@ -138,6 +157,7 @@ class TraditionalGraspPlanningService:
         arm_side = str(payload.get("arm_side", "auto"))
         bbox = payload.get("bbox")
         bbox_format = str(payload.get("bbox_format", "auto"))
+        home_pose = _parse_home_pose(payload.get("home_xz_and_abs_y_m"))
         logger.info(
             "收到抓取规划请求: target=%s arm=%s bbox=%s bbox_format=%s "
             "state_timestamp_s=%.6f current_q_shape=%s current_q_rad=%s",
@@ -154,6 +174,7 @@ class TraditionalGraspPlanningService:
             _format_joint_state(current_q),
         )
         result = self.api.plan_pick_object(
+            home_xz_and_abs_y_m=home_pose,
             object_prompt=object_prompt,
             arm_side=arm_side,
             bbox=bbox,

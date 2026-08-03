@@ -89,6 +89,34 @@ def plan_fixed_side_grasp(
     return waypoints
 
 
+def plan_homing_waypoint(
+    home_xz_and_abs_y_m: tuple[float, float, float],
+    arm: str,
+    rotation: np.ndarray,
+) -> CartesianWaypoint:
+    """Return the post-grasp homing target, mirrored for the requested arm.
+
+    The rotation is the one the grasp was solved with, not a canonical
+    orientation. Re-orienting the wrist on the way home would rotate the held
+    bottle by the candidate's own tilt (10-30 deg for the pitch/yaw candidates
+    this planner emits), which risks spilling or shedding it for no benefit --
+    the point of homing is to retract the arm, not to standardise its pose.
+    """
+    x_m, z_m, y_abs_m = (float(value) for value in home_xz_and_abs_y_m)
+    if not all(math.isfinite(value) for value in (x_m, z_m, y_abs_m)):
+        raise ValueError("归位位姿必须是有限数值")
+    if arm not in {"left", "right"}:
+        raise ValueError("归位位姿只支持 left 或 right")
+    y_m = abs(y_abs_m) if arm == "left" else -abs(y_abs_m)
+    position = np.array([x_m, y_m, z_m], dtype=np.float64)
+    logger.info(
+        "归位路点已生成: arm=%s xyz=[%.4f,%.4f,%.4f] orientation=preserve_grasp",
+        arm,
+        *position,
+    )
+    return CartesianWaypoint("home", Pose(position, np.asarray(rotation, dtype=np.float64)))
+
+
 def side_grasp_rotation_candidates(
     initial_rotation: np.ndarray,
     config: PlannerConfig,

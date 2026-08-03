@@ -37,6 +37,7 @@ from rpent_traditional_grasp.planning import (
     interpolate_joint_bridge,
     interpolate_waypoints,
     plan_fixed_side_grasp,
+    plan_homing_waypoint,
     side_grasp_rotation_candidates,
 )
 
@@ -520,8 +521,15 @@ class TraditionalGraspAPI:
         arm_side: str = "auto",
         bbox: object = None,
         bbox_format: str = "auto",
+        home_xz_and_abs_y_m: tuple[float, float, float] | None = None,
     ) -> dict[str, object]:
-        """Plan one complete pick without commanding robot or gripper motion."""
+        """Plan one complete pick without commanding robot or gripper motion.
+
+        ``home_xz_and_abs_y_m`` optionally extends every candidate with a
+        retract-to-ready segment. The caller owns that pose -- it is the same
+        one its ready_arm tool uses -- so it is passed per request rather than
+        duplicated in this project's config, where the two could drift apart.
+        """
         if arm_side not in {"auto", "left", "right"}:
             raise ValueError("arm_side 必须是 auto、left 或 right")
         search = self.search_object(
@@ -615,6 +623,7 @@ class TraditionalGraspAPI:
                     self.context.estimate,
                     candidate,
                     current_joints=seed,
+                    home_xz_and_abs_y_m=home_xz_and_abs_y_m,
                 )
                 for path, metadata in arm_plans:
                     if self.collision_checker is not None:
@@ -900,11 +909,55 @@ class TraditionalGraspAPI:
             current_joints=current_joints,
         )[0][0]
 
+    def _solve_homing_segment(
+        self,
+        *,
+        arm: str,
+        solver: IKSolver,
+        approach: IKPath,
+        rotation: np.ndarray,
+        home_xz_and_abs_y_m: tuple[float, float, float] | None,
+    ) -> IKPath | None:
+        """Solve the retract-to-ready extension, or ``None`` if unavailable.
+
+        Deliberately isolated from the grasp solve: an unreachable homing target
+        must not discard a candidate that grasps perfectly well. Homing is a
+        convenience at the end of a successful pick, so it degrades to "no
+        homing segment" rather than to "no plan".
+        """
+        if home_xz_and_abs_y_m is None:
+            return None
+        try:
+            home = plan_homing_waypoint(home_xz_and_abs_y_m, arm, rotation)
+            last_q = np.asarray(approach.positions[-1], dtype=np.float64)
+            dense = interpolate_waypoints(
+                solver.forward(last_q),
+                [home],
+                self.config.planner.cartesian_step_m,
+                self.config.planner.rotation_step_rad,
+            )
+            return solve_continuous_path(
+                arm,
+                solver,
+                last_q,
+                dense,
+                self.config.planner,
+            )
+        except Exception:
+            logger.warning(
+                "归位段求解失败，本候选将不带归位段: arm=%s home=%s",
+                arm,
+                home_xz_and_abs_y_m,
+                exc_info=True,
+            )
+            return None
+
     def plan_contact_grasp_candidates(
         self,
         estimate: BottleEstimate,
         arm: str,
         current_joints: np.ndarray | None = None,
+        home_xz_and_abs_y_m: tuple[float, float, float] | None = None,
     ) -> list[tuple[IKPath, dict[str, object]]]:
         """Plan bounded side-grasp orientations without commanding motion."""
         solver = self.ik_solvers[arm]
@@ -963,12 +1016,20 @@ class TraditionalGraspAPI:
                     dense_approach,
                     self.config.planner,
                 )
+                homing_path = self._solve_homing_segment(
+                    arm=arm,
+                    solver=solver,
+                    approach=approach_path,
+                    rotation=orientation.rotation,
+                    home_xz_and_abs_y_m=home_xz_and_abs_y_m,
+                )
                 path = _combine_side_grasp_path(
                     arm=arm,
                     joint_names=approach_path.joint_names,
                     seed=current_joints,
                     bridge=bridge,
                     approach=approach_path,
+                    homing=homing_path,
                     orientation_penalty=(
                         self.config.planner.side_grasp_orientation_penalty
                         * orientation.angular_offset_rad**2
@@ -1036,8 +1097,11 @@ def _combine_side_grasp_path(
     bridge: list[np.ndarray],
     approach: IKPath,
     orientation_penalty: float,
+    homing: IKPath | None = None,
 ) -> IKPath:
-    positions = [*bridge, *approach.positions]
+    homing_positions = list(homing.positions) if homing is not None else []
+    homing_names = list(homing.waypoint_names) if homing is not None else []
+    positions = [*bridge, *approach.positions, *homing_positions]
     waypoint_names = [
         *(
             [f"joint_pregrasp:{index + 1}/{len(bridge)}" for index in range(len(bridge) - 1)]
@@ -1046,16 +1110,22 @@ def _combine_side_grasp_path(
         ),
         "pregrasp",
         *approach.waypoint_names,
+        *homing_names,
     ]
     if len(positions) != len(waypoint_names):
         raise RuntimeError("侧抓组合路径的位置与名称数量不一致")
     previous = np.asarray(seed, dtype=np.float64)
     max_step = 0.0
     score = float(orientation_penalty)
-    for position in positions:
+    # Homing is the same fixed retract for every candidate, so it must not enter
+    # the score -- ranking is about which grasp orientation is cheaper to reach.
+    # It does enter max_joint_step_rad, which is a safety bound on real motion.
+    scored_upto = len(positions) - len(homing_positions)
+    for index, position in enumerate(positions):
         delta = np.asarray(position, dtype=np.float64) - previous
         max_step = max(max_step, float(np.max(np.abs(delta))))
-        score += float(np.sum(delta**2))
+        if index < scored_upto:
+            score += float(np.sum(delta**2))
         previous = position
     return IKPath(
         arm=arm,
