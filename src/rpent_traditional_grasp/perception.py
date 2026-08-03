@@ -170,6 +170,7 @@ class Sam2BoxSegmenter:
         self.device = device
         self.artifact_dir = Path(artifact_dir) if artifact_dir else None
         self._predictor: Any = None
+        self.last_artifacts: dict[str, str] = {}
 
     def segment(self, image: np.ndarray, detection: Detection) -> np.ndarray:
         predictor = self._load()
@@ -195,6 +196,7 @@ class Sam2BoxSegmenter:
         best_index = int(np.argmax(np.asarray(scores)))
         mask = np.asarray(masks[best_index], dtype=bool)
         artifact_paths: tuple[Path, Path, Path] | None = None
+        self.last_artifacts = {}
         if self.artifact_dir is not None:
             try:
                 artifact_paths = save_segmentation_pngs(
@@ -204,6 +206,12 @@ class Sam2BoxSegmenter:
                     bbox_xyxy=detection.bbox_xyxy,
                     mask=mask,
                 )
+                self.last_artifacts = {
+                    "bbox_image_path": str(artifact_paths[0]),
+                    "mask_image_path": str(artifact_paths[1]),
+                    "overlay_image_path": str(artifact_paths[2]),
+                    "result_image_path": str(artifact_paths[2]),
+                }
             except Exception:
                 logger.exception(
                     "保存 SAM2 诊断图片失败: artifact_dir=%s class=%s "

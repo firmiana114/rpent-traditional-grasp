@@ -102,6 +102,38 @@ def test_original_api_names_complete_simulated_pick() -> None:
     assert verify["verified"] is True
 
 
+def test_search_object_forwards_the_segmentation_artifact_paths() -> None:
+    """Only the segmenter knows where it wrote the mask images.
+
+    The bridge copies these keys verbatim into the tool result, so a segmenter
+    without them must still produce a valid search result rather than raise.
+    """
+    api = make_api()
+    assert not hasattr(api.segmenter, "last_artifacts")
+
+    without_artifacts = api.search_object("bottle")
+
+    assert without_artifacts["found"] is True
+    assert "overlay_image_path" not in without_artifacts
+
+    api.segmenter.last_artifacts = {  # type: ignore[attr-defined]
+        "bbox_image_path": "/run/bbox.png",
+        "mask_image_path": "/run/mask.png",
+        "overlay_image_path": "/run/overlay.png",
+        "result_image_path": "/run/overlay.png",
+    }
+
+    with_artifacts = api.search_object("bottle")
+
+    assert with_artifacts["overlay_image_path"] == "/run/overlay.png"
+    assert with_artifacts["result_image_path"] == "/run/overlay.png"
+    assert with_artifacts["position_body_m"] == without_artifacts["position_body_m"]
+
+    api.segmenter.last_artifacts = "not a dict"  # type: ignore[attr-defined]
+
+    assert api.search_object("bottle")["found"] is True
+
+
 def test_nominal_gripper_spec_cannot_be_claimed_as_robot_validated() -> None:
     api = make_api()
     api.close()

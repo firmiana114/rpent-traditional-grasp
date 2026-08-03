@@ -33,6 +33,15 @@ def _format_joint_state(joints: np.ndarray) -> str:
 class PlanningAPI(Protocol):
     """Subset of the grasp API required by the service transport."""
 
+    def search_object(
+        self,
+        *,
+        object_prompt: str | None = None,
+        bbox: object = None,
+        bbox_format: str = "auto",
+    ) -> dict[str, object]:
+        """Return a no-motion target localization."""
+
     def plan_pick_object(
         self,
         *,
@@ -82,6 +91,36 @@ class TraditionalGraspPlanningService:
         if operation == "close":
             self.close()
             return {"success": True, "closed": True, "motion_commanded": False}
+        if operation == "search_object":
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("search_object payload 必须是对象")
+            object_prompt = str(payload.get("object_prompt", "")).strip()
+            if not object_prompt:
+                raise ValueError("object_prompt 不能为空")
+            bbox = payload.get("bbox")
+            bbox_format = str(payload.get("bbox_format", "auto"))
+            logger.info(
+                "收到目标搜索请求: target=%s bbox=%s bbox_format=%s",
+                object_prompt,
+                _bounded_repr(bbox),
+                bbox_format,
+            )
+            result = self.api.search_object(
+                object_prompt=object_prompt,
+                bbox=bbox,
+                bbox_format=bbox_format,
+            )
+            result = dict(result)
+            result.update(
+                {
+                    "schema_version": 1,
+                    "motion_commanded": False,
+                    "code_revision": self.code_revision,
+                    "config_sha256": self.config_sha256,
+                }
+            )
+            return result
         if operation != "plan_pick":
             raise ValueError(f"不支持的规划服务操作: {operation}")
 

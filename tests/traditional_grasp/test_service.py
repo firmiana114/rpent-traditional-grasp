@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import pytest
 
 from rpent_traditional_grasp.execution import PlanningArmExecutor
 from rpent_traditional_grasp.service import TraditionalGraspPlanningService
@@ -12,6 +13,20 @@ class FakePlanningAPI:
     def __init__(self) -> None:
         self.closed = False
         self.last_kwargs: dict[str, object] | None = None
+        self.last_search_kwargs: dict[str, object] | None = None
+
+    def search_object(self, **kwargs: object) -> dict[str, object]:
+        self.last_search_kwargs = kwargs
+        return {
+            "success": True,
+            "action": "search_object",
+            "found": True,
+            "visible": True,
+            "bbox": [10, 20, 30, 40],
+            "position_body_m": [0.5, 0.08, 0.05],
+            "bbox_image_path": "/run/bbox.png",
+            "overlay_image_path": "/run/overlay.png",
+        }
 
     def plan_pick_object(self, **kwargs: object) -> dict[str, object]:
         self.last_kwargs = kwargs
@@ -121,6 +136,70 @@ def test_planning_service_signs_every_ranked_side_grasp_candidate() -> None:
     assert plans[0]["plan_id"] != plans[1]["plan_id"]
     assert all(len(plan["plan_id"]) == 64 for plan in plans)
     assert result["plan"] == plans[0]
+
+
+def test_planning_service_dispatches_search_object_without_motion(caplog) -> None:
+    """The parent bridge sends this operation; dropping it breaks localization.
+
+    ``TraditionalGraspBackend.search_object`` posts ``operation=search_object``
+    over the same transport as ``plan_pick``. An unhandled operation raises
+    ``不支持的规划服务操作`` and the LLM loses every bbox it feeds back into
+    ``pick_object``, so the dispatch is a contract between the two repositories.
+    """
+    api = FakePlanningAPI()
+    service = TraditionalGraspPlanningService(
+        api,
+        PlanningArmExecutor(),
+        code_revision="abc123",
+        config_sha256="config123",
+        plan_ttl_s=10.0,
+        clock=lambda: 100.0,
+    )
+
+    with caplog.at_level(logging.INFO, logger="rpent_traditional_grasp"):
+        result = service.handle(
+            {
+                "operation": "search_object",
+                "payload": {
+                    "object_prompt": "water bottle",
+                    "bbox": [10, 20, 30, 40],
+                    "bbox_format": "pixel",
+                },
+            }
+        )
+
+    assert result["success"] is True
+    assert result["motion_commanded"] is False
+    assert result["schema_version"] == 1
+    assert result["code_revision"] == "abc123"
+    assert result["config_sha256"] == "config123"
+    # The upper layer reads these paths straight out of the search result.
+    assert result["bbox_image_path"] == "/run/bbox.png"
+    assert result["overlay_image_path"] == "/run/overlay.png"
+    assert api.last_search_kwargs == {
+        "object_prompt": "water bottle",
+        "bbox": [10, 20, 30, 40],
+        "bbox_format": "pixel",
+    }
+    assert "收到目标搜索请求" in "\n".join(caplog.messages)
+
+
+def test_search_object_rejects_an_empty_prompt() -> None:
+    api = FakePlanningAPI()
+    service = TraditionalGraspPlanningService(
+        api,
+        PlanningArmExecutor(),
+        code_revision="abc123",
+        config_sha256="config123",
+    )
+
+    with pytest.raises(ValueError, match="object_prompt 不能为空"):
+        service.handle(
+            {"operation": "search_object", "payload": {"object_prompt": "  "}}
+        )
+    with pytest.raises(ValueError, match="payload 必须是对象"):
+        service.handle({"operation": "search_object", "payload": None})
+    assert api.last_search_kwargs is None
 
 
 def test_planning_request_logs_the_seed_joint_values() -> None:

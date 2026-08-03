@@ -248,6 +248,9 @@ class TraditionalGraspAPI:
                 observation.timestamp_s,
             )
             mask = self.segment_object(observation.left, detection)
+            segmentation_artifacts = getattr(self.segmenter, "last_artifacts", {})
+            if not isinstance(segmentation_artifacts, dict):
+                segmentation_artifacts = {}
             estimate = self.mask_depth_to_pointcloud(detection, mask, observation)
             self.context = PipelineContext(
                 observation=observation,
@@ -280,6 +283,7 @@ class TraditionalGraspAPI:
             "diameter_m": estimate.diameter_m,
             "depth_mad_m": estimate.depth_mad_m,
             "valid_depth_pixels": estimate.valid_depth_pixels,
+            **dict(segmentation_artifacts),
         }
 
     def assess_target_reach(

@@ -104,6 +104,53 @@ def test_sam2_log_correlates_frame_box_scores_and_mask(
     assert "mask_bbox=(3, 2, 7, 5)" in rendered
 
 
+def test_sam2_publishes_and_clears_the_artifact_paths(tmp_path: Path) -> None:
+    """``search_object`` can only report the diagnostic images it is handed.
+
+    The paths are recomputed per frame, so a stale value would point the upper
+    layer at the previous run's mask; the reset therefore matters as much as
+    the assignment.
+    """
+    pytest.importorskip("cv2")
+    image = np.zeros((6, 8, 3), dtype=np.uint8)
+    masks = np.zeros((2, 6, 8), dtype=bool)
+    masks[0, 1:4, 2:6] = True
+    predictor = _FakeSamPredictor(
+        masks,
+        np.asarray([0.9, 0.1], dtype=np.float32),
+    )
+    detection = Detection("water bottle", 1.0, (2, 1, 7, 5))
+    segmenter = Sam2BoxSegmenter(
+        tmp_path,
+        tmp_path / "checkpoint.pt",
+        "config.yaml",
+        device="cpu",
+        artifact_dir=tmp_path / "artifacts",
+    )
+    segmenter._predictor = predictor
+
+    segmenter.segment(image, detection)
+
+    assert set(segmenter.last_artifacts) == {
+        "bbox_image_path",
+        "mask_image_path",
+        "overlay_image_path",
+        "result_image_path",
+    }
+    assert all(
+        Path(path).is_file() for path in segmenter.last_artifacts.values()
+    )
+    assert (
+        segmenter.last_artifacts["result_image_path"]
+        == segmenter.last_artifacts["overlay_image_path"]
+    )
+
+    segmenter.artifact_dir = None
+    segmenter.segment(image, detection)
+
+    assert segmenter.last_artifacts == {}
+
+
 def test_segmentation_artifacts_include_box_mask_and_overlay(
     tmp_path: Path,
 ) -> None:
