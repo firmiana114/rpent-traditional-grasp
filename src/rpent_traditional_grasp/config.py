@@ -97,6 +97,16 @@ class PlannerConfig:
     # about +-8 mm wide. 0.54 m targets that single physically validated sample.
     # Advice only; rejection uses the rigorous bound alone.
     side_grasp_planning_radius_m: float = 0.54
+    # When a target sits beyond the rigorous serial-length bound *and* a forward
+    # base advance would fix it, return that advance instead of solving. Off by
+    # default because the fail-open it bypasses is deliberate: the bound is exact
+    # but the target is perceived, teleop has grasped a bottle this pipeline
+    # called out of reach, and the known frame mismatch is 11.6 cm -- larger than
+    # a typical overshoot, so calibration error really can explain one. Turning
+    # this on trades that tolerance for the 14.6 s a doomed solve costs
+    # (measured 2026-08-04 13:15). Only sound where the base is free to move;
+    # with base motion forbidden it converts a long-shot attempt into a refusal.
+    skip_solve_when_base_advance_fixes_reach: bool = False
     preferred_arm: str = "auto"
     # Empirical end-to-end correction added to the grasp-center target, in the
     # contact frame (x = horizontal shoulder→bottle approach, y = its left,

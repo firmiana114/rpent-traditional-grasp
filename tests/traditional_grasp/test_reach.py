@@ -182,3 +182,72 @@ def test_unvalidated_calibration_keeps_solving_a_target_beyond_the_bound(
     # unvalidated calibration must not veto the solve before it is attempted.
     assert plan["status"] != "unreachable"
     assert "标定尚未验收，继续尝试求解" in caplog.text
+
+
+def test_base_advance_shortcut_is_opt_in_and_leaves_the_fail_open_intact(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The default must keep solving: see the flag's comment in config.py."""
+    api = _far_target_api()
+
+    assert api.config.planner.skip_solve_when_base_advance_fixes_reach is False
+
+    with caplog.at_level(logging.WARNING, logger="rpent_traditional_grasp.api"):
+        plan = api.plan_pick_object(object_prompt="bottle")
+
+    assert plan["status"] not in {"unreachable", "needs_base_advance"}
+    assert "继续尝试求解" in caplog.text
+
+
+def test_enabled_shortcut_returns_the_advance_without_spending_an_ik_solve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _far_target_api()
+    api.config.planner.skip_solve_when_base_advance_fixes_reach = True
+    # Calibration stays unvalidated: the whole point is that advising does not
+    # need the trust that refusing does.
+    assert api.config.safety.stereo_calibration_validated is False
+    solved: list[str] = []
+    for arm, solver in api.ik_solvers.items():
+        original = solver.solve
+
+        def guard(seed, target, _arm=arm, _original=original):
+            solved.append(_arm)
+            return _original(seed, target)
+
+        monkeypatch.setattr(solver, "solve", guard)
+
+    plan = api.plan_pick_object(object_prompt="bottle")
+
+    assert plan["success"] is False
+    # Not "unreachable": the caller is told what to do about it, and doing it
+    # is one short forward nudge.
+    assert plan["status"] == "needs_base_advance"
+    assert plan["required_base_advance_m"] == pytest.approx(0.158894, abs=1e-5)
+    assert "advance the base by 0.159 m and retry" in plan["error"]
+    assert solved == [], "已经能几何判定时不应再花一次逆解"
+
+
+def test_shortcut_still_solves_when_driving_forward_cannot_help(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A laterally out-of-range target has no advice, so the solver still runs."""
+    api = _far_target_api()
+    api.config.planner.skip_solve_when_base_advance_fixes_reach = True
+    monkeypatch.setattr(
+        api,
+        "assess_target_reach",
+        lambda *_args, **_kwargs: {
+            "arms": {},
+            "any_arm_within_serial_length_upper_bound": False,
+            "any_arm_within_planning_radius": False,
+            "required_base_advance_m": None,
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="rpent_traditional_grasp.api"):
+        plan = api.plan_pick_object(object_prompt="bottle")
+
+    assert plan["status"] != "needs_base_advance"
+    assert "继续尝试求解" in caplog.text

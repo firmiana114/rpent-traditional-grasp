@@ -570,18 +570,7 @@ class TraditionalGraspAPI:
                 self.config.safety.stereo_calibration_validated
                 and self.config.safety.camera_to_body_validated
             )
-            if not trusted:
-                logger.warning(
-                    "目标超出手臂杆长上界，但标定尚未验收，继续尝试求解: "
-                    "target=%s arms=%s required_base_advance_m=%s "
-                    "stereo_validated=%s camera_to_body_validated=%s",
-                    object_prompt,
-                    _bounded_repr(reach["arms"]),
-                    advance,
-                    self.config.safety.stereo_calibration_validated,
-                    self.config.safety.camera_to_body_validated,
-                )
-            else:
+            if trusted:
                 logger.warning(
                     "目标超出手臂杆长上界，无需求解即可判定不可达: target=%s "
                     "arms=%s required_base_advance_m=%s",
@@ -613,6 +602,57 @@ class TraditionalGraspAPI:
                     ),
                     "reach": reach,
                 }
+            if (
+                advance is not None
+                and self.config.planner.skip_solve_when_base_advance_fixes_reach
+            ):
+                # Opt-in. Untrusted calibration forbids *refusing*, not
+                # *advising*: refusing throws away a grasp that would have
+                # worked, while advising costs one forward nudge and then
+                # grasps anyway. That equivalence only holds while the base is
+                # free to move, which this layer cannot see -- hence the flag
+                # rather than a behaviour change. What it buys is the 14.6 s a
+                # doomed detection-plus-thirteen-solves pass costs to reach the
+                # same conclusion this assessment already holds (2026-08-04
+                # 13:15).
+                logger.warning(
+                    "目标超出手臂杆长上界但可由底盘前进解决，跳过求解并回报所需前进量: "
+                    "target=%s arms=%s required_base_advance_m=%.3f",
+                    object_prompt,
+                    _bounded_repr(reach["arms"]),
+                    advance,
+                )
+                return {
+                    "success": False,
+                    "action": "pick_object",
+                    "object_prompt": object_prompt,
+                    "requested_arm_side": arm_side,
+                    "selected_arm_side": None,
+                    "status": "needs_base_advance",
+                    "error": (
+                        "target is beyond the arm serial-length bound; "
+                        f"advance the base by {advance:.3f} m and retry"
+                    ),
+                    "required_base_advance_m": advance,
+                    "verification": None,
+                    "execution": None,
+                    "bbox": search.get("bbox"),
+                    **_empty_pick_artifacts(),
+                    "backend": (
+                        "rpent_traditional_grasp.TraditionalGraspAPI.pick_object"
+                    ),
+                    "reach": reach,
+                }
+            logger.warning(
+                "目标超出手臂杆长上界，但标定尚未验收，继续尝试求解: "
+                "target=%s arms=%s required_base_advance_m=%s "
+                "stereo_validated=%s camera_to_body_validated=%s",
+                object_prompt,
+                _bounded_repr(reach["arms"]),
+                advance,
+                self.config.safety.stereo_calibration_validated,
+                self.config.safety.camera_to_body_validated,
+            )
         planned: list[tuple[IKPath, np.ndarray, dict[str, object]]] = []
         errors: dict[str, str] = {}
         collision_rejected: dict[str, str] = {}
