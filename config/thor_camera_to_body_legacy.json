@@ -2,7 +2,8 @@
   "source": "/home/aiot/airbot/Projects/rabbitbot-dev-ros2/3rdparty/mingjuwang/object_grab.py",
   "status": "legacy_unvalidated",
   "from_frame": "left_camera_optical_rectified",
-  "to_frame": "body",
+  "to_frame": "torso_link",
+  "frame_note": "2026-08-05 判定：平移列 z=0.436 与 URDF d435 在 torso_link 系的设计高度 0.430 相符（骨盆系应为 0.474，差 4.4 cm 的腰部偏移），故 body 指 torso_link，与规划链 BASE torso_link 同系。系归属已定不等于数值已验收，status 仍为 legacy_unvalidated。",
   "transform": [
     [0.0, -0.7384575496707293, 0.67429996836297, 0.0481285],
     [-1.0, 0.0, 0.0, 0.029632],
