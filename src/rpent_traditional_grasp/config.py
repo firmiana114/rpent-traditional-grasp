@@ -72,6 +72,10 @@ class PerceptionConfig:
     detector_backend: str = "vlm"
     vlm_timeout_s: float = 60.0
     vlm_max_tokens: int = 128
+    # Which space the model reports boxes in. Qwen3.5 uses a 0-1000 grid, and
+    # the reading cannot be inferred from the numbers alone -- a reply is often
+    # a valid pixel box and a valid normalized box at the same time.
+    vlm_coordinate_space: str = "normalized_1000"
     detection_confidence: float = 0.45
     detection_iou: float = 0.45
     min_mask_pixels: int = 160
@@ -279,6 +283,14 @@ class TraditionalGraspConfig:
             raise ValueError("perception.vlm_timeout_s 必须大于 0")
         if self.perception.vlm_max_tokens <= 0:
             raise ValueError("perception.vlm_max_tokens 必须大于 0")
+        if self.perception.vlm_coordinate_space not in {
+            "normalized_1000",
+            "pixel",
+            "auto",
+        }:
+            raise ValueError(
+                "perception.vlm_coordinate_space 必须是 normalized_1000、pixel 或 auto"
+            )
         if self.perception.detector_backend == "vlm" and not self.resources.vlm_endpoint:
             raise ValueError("detector_backend=vlm 时必须配置 resources.vlm_endpoint")
         if not 0.0 < self.perception.detection_confidence <= 1.0:

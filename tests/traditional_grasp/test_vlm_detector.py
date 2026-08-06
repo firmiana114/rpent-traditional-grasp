@@ -12,8 +12,8 @@ W, H = 640, 480
 COLA = (202, 177, 297, 207)
 
 
-def _detector() -> VlmDetector:
-    return VlmDetector("http://localhost:8000/v1", "test-model")
+def _detector(space: str = "normalized_1000") -> VlmDetector:
+    return VlmDetector("http://localhost:8000/v1", "test-model", coordinate_space=space)
 
 
 def test_normalized_grid_is_converted_to_pixels():
@@ -23,24 +23,53 @@ def test_normalized_grid_is_converted_to_pixels():
     ]
 
 
-def test_pixel_box_is_left_alone():
-    """A box already inside the frame must not be rescaled."""
-    assert _detector()._parse('{"bbox":[202,177,297,207]}', W, H) == [COLA]
+def test_the_space_cannot_be_guessed_from_the_numbers():
+    """The measured reply is a valid box in BOTH spaces; only config resolves it.
+
+    This is why the space is configured rather than sniffed: [316,369,463,431]
+    fits inside 640x480 as pixels, yet only the scaled reading lands on the
+    bottle.
+    """
+    reply = '{"bbox":[316,369,463,431]}'
+    assert _detector("normalized_1000")._parse(reply, W, H) == [(202, 177, 296, 207)]
+    assert _detector("pixel")._parse(reply, W, H) == [(316, 369, 463, 431)]
+
+
+def test_pixel_space_leaves_the_box_alone():
+    assert _detector("pixel")._parse('{"bbox":[202,177,297,207]}', W, H) == [COLA]
+
+
+def test_auto_only_rules_out_values_overflowing_the_grid():
+    """auto assumes the 0-1000 grid unless a value cannot fit on it."""
+    assert _detector("auto")._parse('{"bbox":[316,369,463,431]}', W, H) == [
+        (202, 177, 296, 207)
+    ]
+    # >1000 cannot be a grid coordinate, so it is read as pixels and clamped.
+    assert _detector("auto")._parse('{"bbox":[100,100,1400,1450]}', W, H) == [
+        (100, 100, W, H)
+    ]
+
+
+def test_unknown_coordinate_space_is_refused():
+    with pytest.raises(ValueError):
+        VlmDetector("http://x/v1", "m", coordinate_space="bogus")
 
 
 def test_alternate_key_names_are_accepted():
     """The same model answered with bbox and bbox_2d on consecutive calls."""
     for key in ("bbox", "bbox_2d", "box"):
-        assert _detector()._parse('{"%s":[202,177,297,207]}' % key, W, H) == [COLA]
+        assert _detector("pixel")._parse(
+            '{"%s":[202,177,297,207]}' % key, W, H
+        ) == [COLA]
 
 
 def test_json_wrapped_in_markdown_fence_is_recovered():
     reply = '```json\n{"bbox": [202, 177, 297, 207]}\n```'
-    assert _detector()._parse(reply, W, H) == [COLA]
+    assert _detector("pixel")._parse(reply, W, H) == [COLA]
 
 
 def test_nested_list_takes_the_first_box():
-    assert _detector()._parse('{"boxes":[[202,177,297,207]]}', W, H) == [COLA]
+    assert _detector("pixel")._parse('{"boxes":[[202,177,297,207]]}', W, H) == [COLA]
 
 
 @pytest.mark.parametrize(
@@ -55,16 +84,19 @@ def test_nested_list_takes_the_first_box():
     ],
 )
 def test_unusable_replies_yield_no_detection(reply):
-    assert _detector()._parse(reply, W, H) == []
+    assert _detector("pixel")._parse(reply, W, H) == []
 
 
 def test_box_is_clamped_to_the_frame():
-    (x1, y1, x2, y2), = _detector()._parse('{"bbox":[-30,-20,900,700]}', W, H)
+    """Clamping happens after conversion, so it holds in either space."""
+    (x1, y1, x2, y2), = _detector("pixel")._parse('{"bbox":[-30,-20,900,700]}', W, H)
+    assert (x1, y1) == (0, 0) and (x2, y2) == (W, H)
+    (x1, y1, x2, y2), = _detector()._parse('{"bbox":[-50,-50,1200,1200]}', W, H)
     assert (x1, y1) == (0, 0) and (x2, y2) == (W, H)
 
 
 def test_inverted_corners_are_reordered():
-    assert _detector()._parse('{"bbox":[297,207,202,177]}', W, H) == [COLA]
+    assert _detector("pixel")._parse('{"bbox":[297,207,202,177]}', W, H) == [COLA]
 
 
 def test_detect_reports_the_target_and_survives_a_dead_endpoint():
@@ -82,7 +114,7 @@ def test_detect_uses_only_the_first_prompt():
             seen["target"] = target
             return '{"bbox":[202,177,297,207]}'
 
-    got = _Stub("http://x/v1", "m").detect(
+    got = _Stub("http://x/v1", "m", coordinate_space="pixel").detect(
         np.zeros((H, W, 3), dtype=np.uint8),
         ["the black cola bottle", "bottle", "water bottle"],
     )
@@ -114,6 +146,7 @@ def test_yolo_world_remains_selectable():
         ("detector_backend", "bogus"),
         ("vlm_timeout_s", 0.0),
         ("vlm_max_tokens", 0),
+        ("vlm_coordinate_space", "bogus"),
     ],
 )
 def test_invalid_detector_settings_are_refused(field, value):

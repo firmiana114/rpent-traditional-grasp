@@ -299,6 +299,7 @@ class VlmDetector:
 
     #: Qwen reports boxes on a 0-1000 grid rather than in pixels.
     _NORMALIZED_GRID = 1000.0
+    COORDINATE_SPACES = ("normalized_1000", "pixel", "auto")
 
     def __init__(
         self,
@@ -307,12 +308,18 @@ class VlmDetector:
         *,
         timeout_s: float = 60.0,
         max_tokens: int = 128,
+        coordinate_space: str = "normalized_1000",
         weights_path: str | Path | None = None,
     ) -> None:
+        if coordinate_space not in self.COORDINATE_SPACES:
+            raise ValueError(
+                "coordinate_space 必须是 " + "、".join(self.COORDINATE_SPACES)
+            )
         self.endpoint = endpoint.rstrip("/")
         self.model = model
         self.timeout_s = float(timeout_s)
         self.max_tokens = int(max_tokens)
+        self.coordinate_space = coordinate_space
         self.weights_path = str(weights_path) if weights_path else None
 
     def detect(self, image: np.ndarray, prompts: Sequence[str]) -> list[Detection]:
@@ -447,18 +454,19 @@ class VlmDetector:
             return []
         if not all(math.isfinite(v) for v in values):
             return []
-        # Normalized 0-1000 coordinates are Qwen's convention. Treat a box as
-        # normalized only when it cannot be pixels, so a genuinely small pixel
-        # box near the origin is not silently rescaled.
-        if max(values) <= self._NORMALIZED_GRID and (
-            values[2] > width or values[3] > height
-        ):
-            values = [
-                values[0] * width / self._NORMALIZED_GRID,
-                values[1] * height / self._NORMALIZED_GRID,
-                values[2] * width / self._NORMALIZED_GRID,
-                values[3] * height / self._NORMALIZED_GRID,
-            ]
+        # Which space the numbers are in cannot be recovered from the numbers:
+        # the measured reply [316,369,463,431] is a valid 640x480 pixel box AND
+        # the correct answer once scaled from the 0-1000 grid, and only the
+        # scaled reading matches the bottle. So the space is configured, not
+        # guessed. The deployed Qwen3.5 emits the 0-1000 grid, hence the
+        # default; "auto" exists only for models whose convention is unknown
+        # and merely rules out values that overflow the grid.
+        space = self.coordinate_space
+        if space == "auto":
+            space = "pixel" if max(values) > self._NORMALIZED_GRID else "normalized_1000"
+        if space == "normalized_1000":
+            scale = (width, height, width, height)
+            values = [v * s / self._NORMALIZED_GRID for v, s in zip(values, scale)]
         x1, y1, x2, y2 = (int(round(v)) for v in values)
         x1, x2 = sorted((max(0, min(x1, width)), max(0, min(x2, width))))
         y1, y2 = sorted((max(0, min(y1, height)), max(0, min(y2, height))))

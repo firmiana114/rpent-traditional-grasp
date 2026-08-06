@@ -345,6 +345,7 @@ def _build_detector(config: TraditionalGraspConfig, ultralytics_device: Any) -> 
             resources.vlm_model,
             timeout_s=config.perception.vlm_timeout_s,
             max_tokens=config.perception.vlm_max_tokens,
+            coordinate_space=config.perception.vlm_coordinate_space,
             weights_path=resources.vlm_weights or None,
         )
     logger.info("目标接地使用 YOLO-World: model=%s", resources.yolo_model)
