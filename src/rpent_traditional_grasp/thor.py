@@ -20,7 +20,11 @@ from rpent_traditional_grasp.ik import MockIKSolver, TracIKProcess
 from rpent_traditional_grasp.image_trace import pixel_sha256, save_stereo_pngs
 from rpent_traditional_grasp.logging import get_logger
 from rpent_traditional_grasp.models import IKPath
-from rpent_traditional_grasp.perception import Sam2BoxSegmenter, YoloWorldDetector
+from rpent_traditional_grasp.perception import (
+    Sam2BoxSegmenter,
+    VlmDetector,
+    YoloWorldDetector,
+)
 from rpent_traditional_grasp.stereo import (
     ExternalCREStereoBackend,
     RectifiedStereoPipeline,
@@ -317,6 +321,42 @@ def select_perception_device() -> tuple[str, int | str]:
     return selected, ultralytics_device
 
 
+def _build_detector(config: TraditionalGraspConfig, ultralytics_device: Any) -> Any:
+    """Pick the grounding backend named by the config.
+
+    Defaults to the VLM: on the field scene YOLO-World labelled all three
+    drinks ``bottle`` and ranked the cola third, so the pipeline's
+    highest-confidence rule selected the wrong bottle 10 times out of 10, while
+    the VLM was right 10 out of 10. ``yolo_world`` stays available because it is
+    200x faster and remains the right choice whenever one target class is the
+    only thing in view.
+    """
+    resources = config.resources
+    backend = config.perception.detector_backend
+    if backend == "vlm":
+        logger.info(
+            "目标接地使用 VLM: endpoint=%s model=%s weights=%s",
+            resources.vlm_endpoint,
+            resources.vlm_model,
+            resources.vlm_weights or "(未配置, 仅记录用)",
+        )
+        return VlmDetector(
+            resources.vlm_endpoint,
+            resources.vlm_model,
+            timeout_s=config.perception.vlm_timeout_s,
+            max_tokens=config.perception.vlm_max_tokens,
+            weights_path=resources.vlm_weights or None,
+        )
+    logger.info("目标接地使用 YOLO-World: model=%s", resources.yolo_model)
+    return YoloWorldDetector(
+        resources.yolo_model,
+        resources.yolo_pt_model,
+        confidence=config.perception.detection_confidence,
+        iou=config.perception.detection_iou,
+        device=ultralytics_device,
+    )
+
+
 def build_thor_shadow_api(
     config_path: str | Path,
     *,
@@ -379,13 +419,7 @@ def build_thor_shadow_api(
             os.getenv("RPENT_TRADITIONAL_GRASP_ARTIFACT_DIR") if online_camera else None
         ),
     )
-    detector = YoloWorldDetector(
-        resources.yolo_model,
-        resources.yolo_pt_model,
-        confidence=config.perception.detection_confidence,
-        iou=config.perception.detection_iou,
-        device=ultralytics_device,
-    )
+    detector = _build_detector(config, ultralytics_device)
     segmenter = Sam2BoxSegmenter(
         resources.sam2_repo,
         resources.sam2_checkpoint,

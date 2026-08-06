@@ -47,6 +47,13 @@ class ResourceConfig:
     collision_checker_module: str = "robots.air_robot.collision"
     collision_checker_class: str = "PinocchioSelfCollisionChecker"
     collision_urdf: str = ""
+    # Vision-language grounding backend. The weights are served by a separate
+    # vLLM process, so this project only needs its endpoint; vlm_weights records
+    # the checkpoint the deployment owns, both as documentation and so the
+    # server can be relaunched without depending on anyone's home directory.
+    vlm_endpoint: str = "http://localhost:8000/v1"
+    vlm_model: str = "Qwen3.5-9B-GPTQ-4bit"
+    vlm_weights: str = ""
 
 
 @dataclass(slots=True)
@@ -58,6 +65,13 @@ class PerceptionConfig:
         "water bottle",
         "bottled water",
     )
+    # "vlm" grounds the target with a vision-language model; "yolo_world" keeps
+    # the original open-vocabulary detector. vlm is the default because
+    # yolo_world scored 0/10 at telling a cola from a Fanta on the field scene
+    # while the vlm scored 10/10 (see VlmDetector for the measurements).
+    detector_backend: str = "vlm"
+    vlm_timeout_s: float = 60.0
+    vlm_max_tokens: int = 128
     detection_confidence: float = 0.45
     detection_iou: float = 0.45
     min_mask_pixels: int = 160
@@ -239,6 +253,9 @@ class TraditionalGraspConfig:
             "collision_checker_python": os.getenv("RPENT_COLLISION_PYTHON"),
             "collision_checker_repo": os.getenv("RPENT_COLLISION_REPO"),
             "collision_urdf": os.getenv("RPENT_COLLISION_URDF"),
+            "vlm_endpoint": os.getenv("RPENT_VLM_ENDPOINT"),
+            "vlm_model": os.getenv("RPENT_VLM_MODEL"),
+            "vlm_weights": os.getenv("RPENT_VLM_WEIGHTS"),
         }
         applied: list[str] = []
         for name, value in overrides.items():
@@ -256,6 +273,14 @@ class TraditionalGraspConfig:
             raise ValueError("safety.mode 必须是 offline、shadow 或 live")
         if self.planner.preferred_arm not in {"auto", "left", "right"}:
             raise ValueError("planner.preferred_arm 必须是 auto、left 或 right")
+        if self.perception.detector_backend not in {"vlm", "yolo_world"}:
+            raise ValueError("perception.detector_backend 必须是 vlm 或 yolo_world")
+        if self.perception.vlm_timeout_s <= 0.0:
+            raise ValueError("perception.vlm_timeout_s 必须大于 0")
+        if self.perception.vlm_max_tokens <= 0:
+            raise ValueError("perception.vlm_max_tokens 必须大于 0")
+        if self.perception.detector_backend == "vlm" and not self.resources.vlm_endpoint:
+            raise ValueError("detector_backend=vlm 时必须配置 resources.vlm_endpoint")
         if not 0.0 < self.perception.detection_confidence <= 1.0:
             raise ValueError("detection_confidence 必须位于 (0, 1]")
         if not 0.0 < self.perception.label_band_fraction <= 1.0:

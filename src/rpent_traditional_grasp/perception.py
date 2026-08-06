@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
 import sys
 import time
@@ -276,6 +277,194 @@ class Sam2BoxSegmenter:
             self.device,
         )
         return self._predictor
+
+
+class VlmDetector:
+    """Open-vocabulary detector backed by a vision-language model over HTTP.
+
+    YOLO-World cannot tell one drink from another here. Measured on the field
+    scene with three bottles (cola lying down, Fanta and Sprite upright), over
+    ten runs each: YOLO located all three boxes well but labelled every one of
+    them ``bottle``, and the cola ranked third by confidence, so picking the
+    top-scoring detection selected the wrong bottle every single time -- 0/10.
+    Naming the brands did not help; with only brand classes offered it labelled
+    all three ``fanta bottle``, and Chinese class names produced no detections
+    at all because the CLIP text encoder behind YOLO-World is English-only.
+    The same VLM on the same image scored 10/10 at IoU 0.96.
+
+    The trade is latency: about 1.6 s against YOLO's 8 ms. That is affordable
+    because grounding runs once per pick, not once per perception cycle, and
+    grasping the wrong bottle costs far more than a second.
+    """
+
+    #: Qwen reports boxes on a 0-1000 grid rather than in pixels.
+    _NORMALIZED_GRID = 1000.0
+
+    def __init__(
+        self,
+        endpoint: str,
+        model: str,
+        *,
+        timeout_s: float = 60.0,
+        max_tokens: int = 128,
+        weights_path: str | Path | None = None,
+    ) -> None:
+        self.endpoint = endpoint.rstrip("/")
+        self.model = model
+        self.timeout_s = float(timeout_s)
+        self.max_tokens = int(max_tokens)
+        self.weights_path = str(weights_path) if weights_path else None
+
+    def detect(self, image: np.ndarray, prompts: Sequence[str]) -> list[Detection]:
+        """Ground the first prompt; later prompts are generic fallbacks.
+
+        ``prompts`` arrives as the task target followed by generic words like
+        "bottle". Those extras exist to give YOLO-World something inside its
+        vocabulary to match, and handing them to a VLM only invites it to
+        return whatever bottle it sees first, which is the failure being fixed.
+        """
+        if not prompts:
+            return []
+        target = str(prompts[0]).strip()
+        if not target:
+            return []
+        height, width = int(image.shape[0]), int(image.shape[1])
+        started = time.perf_counter()
+        try:
+            payload = self._request(image, target, width, height)
+        except Exception:
+            logger.exception(
+                "VLM 检测请求失败: endpoint=%s model=%s target=%s",
+                self.endpoint,
+                self.model,
+                target,
+            )
+            return []
+        boxes = self._parse(payload, width, height)
+        logger.info(
+            "VLM 检测完成: target=%s matches=%d elapsed_ms=%.1f endpoint=%s",
+            target,
+            len(boxes),
+            (time.perf_counter() - started) * 1000.0,
+            self.endpoint,
+        )
+        if not boxes:
+            logger.warning(
+                "VLM 未框出目标: target=%s 原始回复=%s",
+                target,
+                str(payload)[:200],
+            )
+        # A VLM reports no score. 1.0 keeps the downstream "highest confidence
+        # first" ordering meaningful for the single box it returns; it is not a
+        # calibrated probability and must not be compared against YOLO scores.
+        return [
+            Detection(class_name=target, confidence=1.0, bbox_xyxy=box)
+            for box in boxes
+        ]
+
+    def _request(
+        self, image: np.ndarray, target: str, width: int, height: int
+    ) -> str:
+        import base64
+        import json
+        import urllib.request
+
+        try:
+            import cv2
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise RuntimeError("VLM 检测需要安装 OpenCV 以编码图片") from exc
+
+        ok, buffer = cv2.imencode(".png", np.asarray(image))
+        if not ok:
+            raise RuntimeError("VLM 检测图片编码失败")
+        encoded = base64.b64encode(buffer.tobytes()).decode("ascii")
+        instruction = (
+            f"The image is {width}x{height}. Find exactly one object: {target}. "
+            'Output ONLY compact JSON {"bbox":[x1,y1,x2,y2]} with no explanation. '
+            'If it is absent output {"bbox":null}.'
+        )
+        body = {
+            "model": self.model,
+            "temperature": 0,
+            "max_tokens": self.max_tokens,
+            # Left on, the model narrates its reasoning and exhausts the token
+            # budget before it ever emits the JSON.
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64," + encoded
+                            },
+                        },
+                        {"type": "text", "text": instruction},
+                    ],
+                }
+            ],
+        }
+        request = urllib.request.Request(
+            self.endpoint + "/chat/completions",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+        return parsed["choices"][0]["message"]["content"]
+
+    def _parse(
+        self, content: str, width: int, height: int
+    ) -> list[tuple[int, int, int, int]]:
+        import json
+
+        text = str(content or "")
+        try:
+            start, end = text.index("{"), text.rindex("}")
+        except ValueError:
+            return []
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return []
+        # The key name is not stable across replies: the same model and prompt
+        # has returned "bbox" and "bbox_2d" on consecutive calls.
+        raw = None
+        for key in ("bbox", "bbox_2d", "box", "boxes"):
+            if isinstance(data, dict) and data.get(key):
+                raw = data[key]
+                break
+        if raw is None:
+            return []
+        if raw and isinstance(raw[0], (list, tuple)):
+            raw = raw[0]
+        if len(raw) != 4:
+            return []
+        try:
+            values = [float(v) for v in raw]
+        except (TypeError, ValueError):
+            return []
+        if not all(math.isfinite(v) for v in values):
+            return []
+        # Normalized 0-1000 coordinates are Qwen's convention. Treat a box as
+        # normalized only when it cannot be pixels, so a genuinely small pixel
+        # box near the origin is not silently rescaled.
+        if max(values) <= self._NORMALIZED_GRID and (
+            values[2] > width or values[3] > height
+        ):
+            values = [
+                values[0] * width / self._NORMALIZED_GRID,
+                values[1] * height / self._NORMALIZED_GRID,
+                values[2] * width / self._NORMALIZED_GRID,
+                values[3] * height / self._NORMALIZED_GRID,
+            ]
+        x1, y1, x2, y2 = (int(round(v)) for v in values)
+        x1, x2 = sorted((max(0, min(x1, width)), max(0, min(x2, width))))
+        y1, y2 = sorted((max(0, min(y1, height)), max(0, min(y2, height))))
+        if x2 - x1 < 2 or y2 - y1 < 2:
+            return []
+        return [(x1, y1, x2, y2)]
 
 
 class StaticDetector:
