@@ -16,7 +16,10 @@
     "collision_checker_python": "/home/aiot/miniconda3/envs/rpent/bin/python",
     "collision_checker_repo": "/home/aiot/wuxi/RPent",
     "collision_checker_module": "robots.air_robot.collision",
-    "collision_checker_class": "PinocchioSelfCollisionChecker"
+    "collision_checker_class": "PinocchioSelfCollisionChecker",
+    "vlm_endpoint": "http://localhost:8000/v1",
+    "vlm_model": "Qwen3.5-9B-GPTQ-4bit",
+    "vlm_weights": "/home/aiot/wuxi/Qwen3.5-9B-GPTQ-4bit"
   },
   "perception": {
     "target_prompts": [
@@ -25,7 +28,11 @@
       "bottled water"
     ],
     "detection_confidence": 0.45,
-    "detection_iou": 0.45
+    "detection_iou": 0.45,
+    "detector_backend": "vlm",
+    "vlm_timeout_s": 60.0,
+    "vlm_max_tokens": 128,
+    "vlm_coordinate_space": "normalized_1000"
   },
   "planner": {
     "pregrasp_offset_m": 0.1,
@@ -55,8 +62,16 @@
     "max_ranked_candidates": 6,
     "tip_offset_m": 0.150215608966,
     "preferred_arm": "auto",
-    "left_empirical_grasp_offset_m": [-0.0033, 0.0849, 0.0179],
-    "right_empirical_grasp_offset_m": [-0.0226, 0.0363, 0.0467]
+    "left_empirical_grasp_offset_m": [
+      -0.0033,
+      0.0849,
+      0.0179
+    ],
+    "right_empirical_grasp_offset_m": [
+      -0.0226,
+      0.0363,
+      0.0467
+    ]
   },
   "safety": {
     "mode": "shadow",
