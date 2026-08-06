@@ -32,6 +32,12 @@ class ResourceConfig:
     # configuration rather than a constant.
     crestereo_module: str = "object_grab"
     crestereo_class: str = "CREStereo"
+    # Prebuilt TensorRT engine for the same CREStereo graph. It is deliberately
+    # not committed: a serialized engine is tied to the TensorRT major version
+    # and the GPU that built it, so each machine regenerates its own with
+    # scripts/build_crestereo_engine.py. A missing file is not fatal -- the
+    # backend degrades to the ONNX session and says so in the log.
+    crestereo_engine: str = "models/crestereo_init_iter5_480x640.engine"
     stereo_calibration: str = "config/stereo_calibration.json"
     camera_to_body: str = "config/camera_to_body.json"
     gripper_specification: str = "config/g1d_dex1_1_nominal.json"
@@ -76,6 +82,12 @@ class PerceptionConfig:
     # the reading cannot be inferred from the numbers alone -- a reply is often
     # a valid pixel box and a valid normalized box at the same time.
     vlm_coordinate_space: str = "normalized_1000"
+    # "tensorrt" runs CREStereo from the prebuilt engine and falls back to the
+    # ONNX backend whenever the engine will not load; "onnx" keeps the vendor
+    # onnxruntime session. tensorrt is the default because the deployed
+    # planning interpreter ships a CPU-only onnxruntime, which costs ~4.8 s per
+    # frame, while the same interpreter does have a working TensorRT runtime.
+    depth_backend: str = "tensorrt"
     detection_confidence: float = 0.45
     detection_iou: float = 0.45
     min_mask_pixels: int = 160
@@ -248,6 +260,7 @@ class TraditionalGraspConfig:
             "sam2_checkpoint": os.getenv("RPENT_SAM2_CHECKPOINT"),
             "crestereo_repo": os.getenv("RPENT_CRESTEREO_REPO"),
             "crestereo_model": os.getenv("RPENT_CRESTEREO_MODEL"),
+            "crestereo_engine": os.getenv("RPENT_CRESTEREO_ENGINE"),
             "stereo_calibration": os.getenv("RPENT_STEREO_CALIBRATION"),
             "camera_to_body": os.getenv("RPENT_CAMERA_TO_BODY"),
             "gripper_specification": os.getenv("RPENT_GRIPPER_SPECIFICATION"),
@@ -279,6 +292,14 @@ class TraditionalGraspConfig:
             raise ValueError("planner.preferred_arm 必须是 auto、left 或 right")
         if self.perception.detector_backend not in {"vlm", "yolo_world"}:
             raise ValueError("perception.detector_backend 必须是 vlm 或 yolo_world")
+        if self.perception.depth_backend not in {"tensorrt", "onnx"}:
+            raise ValueError("perception.depth_backend 必须是 tensorrt 或 onnx")
+        if self.perception.depth_backend == "tensorrt" and not (
+            self.resources.crestereo_engine
+        ):
+            raise ValueError(
+                "depth_backend=tensorrt 时必须配置 resources.crestereo_engine"
+            )
         if self.perception.vlm_timeout_s <= 0.0:
             raise ValueError("perception.vlm_timeout_s 必须大于 0")
         if self.perception.vlm_max_tokens <= 0:

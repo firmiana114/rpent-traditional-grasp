@@ -23,7 +23,8 @@
       "bottled water"
     ],
     "detection_confidence": 0.45,
-    "detection_iou": 0.45
+    "detection_iou": 0.45,
+    "depth_backend": "onnx"
   },
   "planner": {
     "pregrasp_offset_m": 0.1,

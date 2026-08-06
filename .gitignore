@@ -10,3 +10,11 @@ dist/
 *.egg-info/
 logs/
 artifacts/
+
+# Compiled inference engines. A serialized TensorRT engine is tied to the
+# TensorRT major version and the GPU that built it, so every machine builds
+# its own with scripts/build_crestereo_engine.py.
+models/
+*.engine
+*.plan
+*.engine.partial

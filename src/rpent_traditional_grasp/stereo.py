@@ -438,6 +438,234 @@ class ExternalCREStereoBackend:
         return active
 
 
+class TensorRTCREStereoBackend:
+    """Run CREStereo from a prebuilt TensorRT engine, falling back on failure.
+
+    ``ExternalCREStereoBackend`` reaches CUDA only if onnxruntime happens to
+    ship an accelerated build, and the deployed planning interpreter ships a
+    CPU-only one, which costs roughly two orders of magnitude per frame. A
+    serialized engine bypasses onnxruntime entirely: it needs only the
+    TensorRT runtime, which that interpreter does have.
+
+    An engine is bound to the TensorRT major version and the GPU that built
+    it, so it can never be assumed loadable. Every failure here therefore
+    degrades to ``fallback`` rather than raising: a stale engine after a
+    JetPack upgrade must slow grasping down, not break it.
+    """
+
+    def __init__(
+        self,
+        engine_path: str | Path,
+        *,
+        fallback: DisparityBackend | None = None,
+        input_size: tuple[int, int] = (640, 480),
+    ) -> None:
+        self.engine_path = Path(engine_path)
+        self.fallback = fallback
+        self.input_width, self.input_height = input_size
+        self.execution_providers: list[str] = []
+        self._engine: Any = None
+        self._context: Any = None
+        self._bindings: dict[str, Any] = {}
+        self._stream: Any = None
+        self._cudart: Any = None
+        self._output_name: str = ""
+        self._load_failed = False
+
+    def predict_disparity(
+        self, left_rectified: np.ndarray, right_rectified: np.ndarray
+    ) -> np.ndarray:
+        if not self._load():
+            if self.fallback is None:
+                raise RuntimeError(
+                    f"CREStereo TensorRT 引擎不可用且无回退后端: {self.engine_path}"
+                )
+            return np.asarray(
+                self.fallback.predict_disparity(left_rectified, right_rectified)
+            )
+        started = time.perf_counter()
+        left_tensor = self._prepare_input(left_rectified)
+        right_tensor = self._prepare_input(right_rectified)
+        try:
+            output = self._infer(left_tensor, right_tensor)
+        except Exception:
+            logger.exception(
+                "CREStereo TensorRT 推理失败，本帧改用回退后端: engine=%s",
+                self.engine_path,
+            )
+            self._load_failed = True
+            if self.fallback is None:
+                raise
+            return np.asarray(
+                self.fallback.predict_disparity(left_rectified, right_rectified)
+            )
+        # CREStereo emits a two-channel flow field; horizontal disparity is
+        # channel 0 and the vendor implementation discards channel 1.
+        disparity = np.squeeze(output[:, 0, :, :])
+        logger.info(
+            "CREStereo TensorRT 推理完成: elapsed_ms=%.1f shape=%s",
+            (time.perf_counter() - started) * 1000.0,
+            "x".join(str(dim) for dim in disparity.shape),
+        )
+        return disparity
+
+    def _prepare_input(self, image: np.ndarray) -> np.ndarray:
+        """Match the vendor preprocessing byte for byte: BGR->RGB, NCHW, raw 0-255."""
+        import cv2
+
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if rgb.shape[1] != self.input_width or rgb.shape[0] != self.input_height:
+            rgb = cv2.resize(rgb, (self.input_width, self.input_height))
+        return np.ascontiguousarray(
+            rgb.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32)
+        )
+
+    def _load(self) -> bool:
+        if self._context is not None:
+            return True
+        if self._load_failed:
+            return False
+        try:
+            self._build_context()
+        except Exception:
+            logger.exception(
+                "加载 CREStereo TensorRT 引擎失败，将退回 ONNX 后端: engine=%s",
+                self.engine_path,
+            )
+            self._load_failed = True
+            return False
+        return True
+
+    def _build_context(self) -> None:
+        import tensorrt as trt
+
+        cudart = _import_cudart()
+        if not self.engine_path.exists():
+            raise FileNotFoundError(f"CREStereo 引擎不存在: {self.engine_path}")
+
+        runtime = trt.Runtime(trt.Logger(trt.Logger.ERROR))
+        engine = runtime.deserialize_cuda_engine(self.engine_path.read_bytes())
+        if engine is None:
+            # Almost always a TensorRT major-version change; the engine must be
+            # rebuilt by scripts/build_crestereo_engine.py on this machine.
+            raise RuntimeError(
+                "引擎反序列化失败，通常是 TensorRT 版本或 GPU 与编译时不一致: "
+                f"tensorrt={trt.__version__} engine={self.engine_path}"
+            )
+        context = engine.create_execution_context()
+        if context is None:
+            raise RuntimeError(f"无法创建 TensorRT 执行上下文: {self.engine_path}")
+
+        status, stream = cudart.cudaStreamCreate()
+        _check_cuda(status, "cudaStreamCreate")
+
+        bindings: dict[str, Any] = {}
+        inputs: list[str] = []
+        output_name = ""
+        for index in range(engine.num_io_tensors):
+            name = engine.get_tensor_name(index)
+            shape = tuple(engine.get_tensor_shape(name))
+            dtype = np.dtype(trt.nptype(engine.get_tensor_dtype(name)))
+            nbytes = int(np.prod(shape)) * dtype.itemsize
+            status, device_ptr = cudart.cudaMalloc(nbytes)
+            _check_cuda(status, f"cudaMalloc({name})")
+            bindings[name] = {
+                "ptr": device_ptr,
+                "shape": shape,
+                "dtype": dtype,
+                "nbytes": nbytes,
+            }
+            context.set_tensor_address(name, int(device_ptr))
+            if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                inputs.append(name)
+            else:
+                output_name = name
+
+        if len(inputs) != 2 or not output_name:
+            raise RuntimeError(
+                "引擎接口与 CREStereo 不符，需要两个输入和一个输出: "
+                f"inputs={inputs} output={output_name!r}"
+            )
+
+        self._engine = engine
+        self._context = context
+        self._bindings = bindings
+        self._stream = stream
+        self._cudart = cudart
+        self._input_names = inputs
+        self._output_name = output_name
+        # The engine's own input geometry wins over the configured default:
+        # a rebuild at another resolution must not silently feed wrong pixels.
+        _, _, height, width = bindings[inputs[0]]["shape"]
+        self.input_width, self.input_height = int(width), int(height)
+        self.execution_providers = ["TensorRT"]
+        logger.info(
+            "CREStereo TensorRT 引擎已加载: engine=%s tensorrt=%s inputs=%s "
+            "output=%s input_size=%dx%d",
+            self.engine_path,
+            trt.__version__,
+            ",".join(inputs),
+            output_name,
+            self.input_width,
+            self.input_height,
+        )
+
+    def _infer(self, left_tensor: np.ndarray, right_tensor: np.ndarray) -> np.ndarray:
+        cudart = self._cudart
+        kind_h2d = cudart.cudaMemcpyKind.cudaMemcpyHostToDevice
+        kind_d2h = cudart.cudaMemcpyKind.cudaMemcpyDeviceToHost
+        for name, tensor in zip(self._input_names, (left_tensor, right_tensor)):
+            binding = self._bindings[name]
+            status = cudart.cudaMemcpyAsync(
+                binding["ptr"],
+                tensor.ctypes.data,
+                binding["nbytes"],
+                kind_h2d,
+                self._stream,
+            )[0]
+            _check_cuda(status, f"cudaMemcpyAsync(H2D,{name})")
+
+        if not self._context.execute_async_v3(stream_handle=int(self._stream)):
+            raise RuntimeError("TensorRT execute_async_v3 返回失败")
+
+        out = self._bindings[self._output_name]
+        host = np.empty(out["shape"], dtype=out["dtype"])
+        status = cudart.cudaMemcpyAsync(
+            host.ctypes.data, out["ptr"], out["nbytes"], kind_d2h, self._stream
+        )[0]
+        _check_cuda(status, "cudaMemcpyAsync(D2H,output)")
+        _check_cuda(cudart.cudaStreamSynchronize(self._stream)[0], "cudaStreamSynchronize")
+        return host
+
+    def close(self) -> None:
+        """Release device memory; safe to call more than once."""
+        cudart = self._cudart
+        if cudart is None:
+            return
+        for binding in self._bindings.values():
+            cudart.cudaFree(binding["ptr"])
+        if self._stream is not None:
+            cudart.cudaStreamDestroy(self._stream)
+        self._bindings = {}
+        self._stream = None
+        self._context = None
+        self._engine = None
+
+
+def _import_cudart() -> Any:
+    """Return the cuda-python runtime module across its two import layouts."""
+    try:
+        from cuda.bindings import runtime as cudart
+    except ImportError:  # cuda-python < 12.8 kept it at the top level.
+        from cuda import cudart  # type: ignore[no-redef]
+    return cudart
+
+
+def _check_cuda(status: Any, operation: str) -> None:
+    if int(status) != 0:
+        raise RuntimeError(f"CUDA 调用失败: op={operation} status={int(status)}")
+
+
 class StaticStereoSource:
     """Deterministic source used by local tests and recorded-frame replay."""
 

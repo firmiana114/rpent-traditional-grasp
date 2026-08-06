@@ -29,6 +29,7 @@ from rpent_traditional_grasp.stereo import (
     ExternalCREStereoBackend,
     RectifiedStereoPipeline,
     StereoCalibration,
+    TensorRTCREStereoBackend,
 )
 
 logger = get_logger("thor")
@@ -358,6 +359,46 @@ def _build_detector(config: TraditionalGraspConfig, ultralytics_device: Any) -> 
     )
 
 
+def _build_disparity_backend(
+    config: TraditionalGraspConfig, torch_device: str
+) -> Any:
+    """Pick the CREStereo runtime named by the config.
+
+    Defaults to the prebuilt TensorRT engine. The deployed planning interpreter
+    carries a CPU-only onnxruntime, so the vendor ONNX session silently costs
+    ~4.8 s per frame there, while the very same interpreter has a working
+    TensorRT runtime. The ONNX backend is always constructed anyway and handed
+    over as the fallback, so an engine built for another TensorRT version only
+    makes depth slow again instead of breaking the grasp.
+    """
+    resources = config.resources
+    onnx_backend = ExternalCREStereoBackend(
+        resources.crestereo_repo,
+        resources.crestereo_model,
+        module_name=resources.crestereo_module,
+        class_name=resources.crestereo_class,
+        device=torch_device,
+    )
+    if config.perception.depth_backend != "tensorrt":
+        logger.info("双目深度使用 ONNX 后端: model=%s", resources.crestereo_model)
+        return onnx_backend
+    engine_path = _resolve_resource_path(resources.crestereo_engine)
+    logger.info(
+        "双目深度使用 TensorRT 引擎: engine=%s exists=%s fallback=ONNX",
+        engine_path,
+        engine_path.exists(),
+    )
+    return TensorRTCREStereoBackend(engine_path, fallback=onnx_backend)
+
+
+def _resolve_resource_path(value: str) -> Path:
+    """Resolve a resource path, treating a relative one as project-relative."""
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return Path(__file__).resolve().parents[2] / path
+
+
 def build_thor_shadow_api(
     config_path: str | Path,
     *,
@@ -405,13 +446,7 @@ def build_thor_shadow_api(
             "必须提供 left_image/right_image；在线采集需显式设置 online_camera"
         )
     torch_device, ultralytics_device = select_perception_device()
-    disparity = ExternalCREStereoBackend(
-        resources.crestereo_repo,
-        resources.crestereo_model,
-        module_name=resources.crestereo_module,
-        class_name=resources.crestereo_class,
-        device=torch_device,
-    )
+    disparity = _build_disparity_backend(config, torch_device)
     stereo_source = RectifiedStereoPipeline(
         camera,
         disparity,
